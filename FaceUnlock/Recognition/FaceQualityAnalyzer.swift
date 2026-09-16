@@ -28,8 +28,11 @@ public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendabl
         // poses are exactly the ones enrolment needs.
         public var minimumLandmarkConfidence: Double = 0.45
         public var maximumMotion: Double = 0.16
-        public var maximumAbsoluteYaw: Double = 0.62
-        public var maximumAbsolutePitch: Double = 0.52
+        // Limits are in `LandmarkPoseEstimator` units. Yaw is an angle estimate
+        // (0.70 ≈ 40°, beyond which the far eye's landmarks stop being reliable);
+        // pitch is a scaled nose-drop proxy rather than a true angle.
+        public var maximumAbsoluteYaw: Double = 0.70
+        public var maximumAbsolutePitch: Double = 0.60
         public var maximumAbsoluteRoll: Double = 0.45
 
         public init() {}

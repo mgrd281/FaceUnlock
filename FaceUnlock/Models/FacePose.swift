@@ -113,13 +113,13 @@ public enum EnrollmentPose: String, CaseIterable, Codable, Sendable, Identifiabl
     public var minimumLean: Double {
         switch axis {
         case .none: return 0
-        case .yaw: return 0.20
-        case .pitch: return 0.14
+        case .yaw: return 0.22    // ≈ 12.5°, in LandmarkPoseEstimator's units
+        case .pitch: return 0.18  // nose-drop proxy units, not an angle
         }
     }
 
-    /// For `.none` steps, how near to centred the head must be.
-    public var centredTolerance: Double { 0.15 }
+    /// For `.none` steps, how near to the baseline the head must be.
+    public var centredTolerance: Double { 0.16 }
 
     /// How many accepted samples this step requires.
     public var requiredSamples: Int { 3 }

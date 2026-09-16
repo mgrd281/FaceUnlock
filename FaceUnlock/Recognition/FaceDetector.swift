@@ -63,16 +63,20 @@ public final class FaceDetector: FaceDetecting, @unchecked Sendable {
         let width = CGFloat(frame.width)
         let height = CGFloat(frame.height)
         return (request.results ?? []).map { observation in
-            DetectedFace(
+            // Vision's own yaw is quantised to π/4 steps, which makes "turn slightly"
+            // unsatisfiable. The landmark estimate is continuous; the observation's
+            // values are only a fallback for a face whose landmarks did not resolve.
+            let pose = observation.landmarks.flatMap(LandmarkPoseEstimator.estimate) ?? FacePose(
+                yaw: observation.yaw?.doubleValue ?? 0,
+                pitch: observation.pitch?.doubleValue ?? 0,
+                roll: observation.roll?.doubleValue ?? 0
+            )
+            return DetectedFace(
                 pixelRect: VNImageRectForNormalizedRect(observation.boundingBox, Int(width), Int(height))
                     .flippedVertically(inHeight: height),
                 normalizedRect: observation.boundingBox,
                 confidence: Double(observation.confidence),
-                pose: FacePose(
-                    yaw: observation.yaw?.doubleValue ?? 0,
-                    pitch: observation.pitch?.doubleValue ?? 0,
-                    roll: observation.roll?.doubleValue ?? 0
-                ),
+                pose: pose,
                 landmarks: observation.landmarks
             )
         }

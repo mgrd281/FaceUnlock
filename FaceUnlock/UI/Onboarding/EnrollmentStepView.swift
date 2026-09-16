@@ -97,9 +97,11 @@ struct EnrollmentStepView: View {
         return update.guidance
     }
 
-    /// How far the pose being asked for has got, 0...1.
+    /// What the cue arc shows: first how far the head has leaned towards the
+    /// pose, then — once the pose registers — how many of its samples are in.
     private var currentStepProgress: Double? {
         guard let update, !update.isComplete, model.isWorking else { return nil }
+        if let lean = update.leanProgress, lean < 1 { return lean }
         let step = update.currentStep
         let captured = update.capturedByStep[step] ?? 0
         return Double(captured) / Double(step.requiredSamples)

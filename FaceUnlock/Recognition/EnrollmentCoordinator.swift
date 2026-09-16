@@ -13,6 +13,9 @@ public struct EnrollmentUpdate: @unchecked Sendable {
     public var faceInPosition: Bool = false
     /// What the quality gate measured, when it had a face to measure.
     public var quality: FaceQuality?
+    /// For a directional step, how far the head has leaned towards what the step
+    /// needs, 0...1. Fills the cue arc so the user can *see* the turn register.
+    public var leanProgress: Double?
 
     public var totalCaptured: Int { capturedByStep.values.reduce(0, +) }
     public var totalRequired: Int {
@@ -142,11 +145,16 @@ public actor EnrollmentCoordinator {
                         currentStep: step,
                         capturedByStep: captured,
                         issues: [],
-                        guidance: Self.guidance(for: step, measured: measured.pose),
+                        guidance: Self.guidance(
+                            for: step,
+                            progress: directions.leanProgress(step: step, pose: measured.pose),
+                            wrongWay: directions.isLeaningWrongWay(step: step, pose: measured.pose)
+                        ),
                         preview: preview,
                         isComplete: false,
                         faceInPosition: true,
-                        quality: measured
+                        quality: measured,
+                        leanProgress: directions.leanProgress(step: step, pose: measured.pose)
                     )
                 )
                 continue
@@ -309,35 +317,77 @@ public actor EnrollmentCoordinator {
         updateContinuation?.yield(update)
     }
 
-    /// Learns which sign of `yaw` and `pitch` the user produces for the first pose
-    /// of each opposed pair, and requires the opposite sign for its partner.
+    /// Learns the user's own straight-ahead pose, then which way they lean for the
+    /// first pose of each opposed pair, and requires the opposite lean for its
+    /// partner.
     ///
-    /// This is what lets enrolment work without asserting Vision's sign
-    /// convention. The security-relevant property is that "left" and "right"
-    /// capture two genuinely different profiles, and that holds whichever way the
-    /// axis happens to point.
+    /// Everything is measured *relative to the person's own baseline* — the pose
+    /// recorded while they looked straight ahead — because the landmark estimate
+    /// is a proxy whose zero point differs from face to face. The security-
+    /// relevant property, that "left" and "right" capture two genuinely different
+    /// profiles, holds without asserting any global sign convention.
     private struct DirectionCalibration {
+        private var baseline: FacePose?
         private var yawSign: Double?
         private var pitchSign: Double?
 
         func matches(step: EnrollmentPose, pose: FacePose) -> Bool {
             switch step.axis {
             case .none:
-                return abs(pose.yaw) <= step.centredTolerance
-                    && abs(pose.pitch) <= step.centredTolerance
+                let reference = baseline ?? FacePose()
+                return abs(pose.yaw - reference.yaw) <= step.centredTolerance
+                    && abs(pose.pitch - reference.pitch) <= step.centredTolerance
             case .yaw:
-                return leans(value: pose.yaw, step: step, recorded: yawSign)
+                return leans(value: delta(step: step, pose: pose), step: step, recorded: yawSign)
             case .pitch:
-                return leans(value: pose.pitch, step: step, recorded: pitchSign)
+                return leans(value: delta(step: step, pose: pose), step: step, recorded: pitchSign)
             }
         }
 
+        /// 0 when the head has not moved from the baseline, 1 at the required lean.
+        func leanProgress(step: EnrollmentPose, pose: FacePose) -> Double {
+            guard step.axis != .none, step.minimumLean > 0 else { return 0 }
+            let value = delta(step: step, pose: pose)
+            let sign: Double = value < 0 ? -1 : 1
+            let recorded = step.axis == .yaw ? yawSign : pitchSign
+            // Leaning the wrong way for the second of a pair counts as no progress.
+            if let recorded, (step.isOpposite ? sign == recorded : sign != recorded) { return 0 }
+            return min(1, abs(value) / step.minimumLean)
+        }
+
+        /// True when the head has clearly leaned, but the way its partner pose
+        /// already used.
+        func isLeaningWrongWay(step: EnrollmentPose, pose: FacePose) -> Bool {
+            guard step.axis != .none else { return false }
+            let value = delta(step: step, pose: pose)
+            guard abs(value) >= step.minimumLean * 0.5 else { return false }
+            let sign: Double = value < 0 ? -1 : 1
+            let recorded = step.axis == .yaw ? yawSign : pitchSign
+            guard let recorded else { return false }
+            return step.isOpposite ? sign == recorded : sign != recorded
+        }
+
         mutating func record(step: EnrollmentPose, pose: FacePose) {
-            guard !step.isOpposite else { return }
             switch step.axis {
-            case .none: return
-            case .yaw: if yawSign == nil { yawSign = pose.yaw < 0 ? -1 : 1 }
-            case .pitch: if pitchSign == nil { pitchSign = pose.pitch < 0 ? -1 : 1 }
+            case .none:
+                if baseline == nil, step == .straight { baseline = pose }
+            case .yaw:
+                if yawSign == nil, !step.isOpposite {
+                    yawSign = delta(step: step, pose: pose) < 0 ? -1 : 1
+                }
+            case .pitch:
+                if pitchSign == nil, !step.isOpposite {
+                    pitchSign = delta(step: step, pose: pose) < 0 ? -1 : 1
+                }
+            }
+        }
+
+        private func delta(step: EnrollmentPose, pose: FacePose) -> Double {
+            let reference = baseline ?? FacePose()
+            switch step.axis {
+            case .yaw: return pose.yaw - reference.yaw
+            case .pitch: return pose.pitch - reference.pitch
+            case .none: return 0
             }
         }
 
@@ -349,20 +399,16 @@ public actor EnrollmentCoordinator {
         }
     }
 
-    /// Magnitude-only guidance.
-    ///
-    /// The step's own title already names the direction; repeating a direction
-    /// here produced contradictory instructions on screen, and would be a guess
-    /// about Vision's sign convention besides. This says only how far there is
-    /// left to go.
-    private static func guidance(for step: EnrollmentPose, measured: FacePose) -> String {
+    /// Magnitude-only guidance. The step's title already names the direction, and
+    /// naming one here again would be a guess about which way the axis points.
+    private static func guidance(for step: EnrollmentPose, progress: Double, wrongWay: Bool) -> String {
         switch step.axis {
         case .none:
             return "Face the camera and hold still."
         case .yaw, .pitch:
-            let value = step.axis == .yaw ? abs(measured.yaw) : abs(measured.pitch)
-            if value < step.minimumLean * 0.4 { return "Keep going — a bit further." }
-            if value < step.minimumLean { return "Almost there." }
+            if wrongWay { return "That is the other direction — turn the opposite way." }
+            if progress < 0.4 { return "Keep going — a bit further." }
+            if progress < 1 { return "Almost there." }
             return "Hold it right there."
         }
     }

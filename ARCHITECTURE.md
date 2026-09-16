@@ -105,6 +105,17 @@ AVCaptureVideoDataOutput
 Cost is spent in increasing order: quality gating is the cheapest stage and runs
 first, so a blurry or empty frame never reaches the feature-print request.
 
+### Head pose comes from the landmarks, not from the observation
+
+`VNFaceObservation.yaw` is quantised to steps of π/4. The only values it ever
+reports are 0, ±0.785 and ±1.57, so any rule of the form "turn slightly — between
+0.2 and 0.6 rad" is unsatisfiable: a slight turn reads as 0 and the first non-zero
+reading is already an extreme pose. `LandmarkPoseEstimator` derives a continuous
+estimate from the nose tip's offset relative to the eye midpoint (after removing
+in-plane roll from the eye line), and `FaceDetector` substitutes it whenever
+landmarks resolved. Enrolment compares it only against the same person's own
+straight-ahead baseline, so the estimate's absolute scale never matters.
+
 ## Descriptor design
 
 Apple ships no public face-recognition embedding API. Three options were weighed:
