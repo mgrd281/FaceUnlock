@@ -76,8 +76,12 @@ public struct PermissionManager: PermissionManaging {
     }
 
     public func promptForAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        // `kAXTrustedCheckOptionPrompt` is declared in C as a non-const extern, so
+        // Swift imports it as a mutable global and Swift 6 rejects reading it as
+        // shared mutable state. Its value is a documented, stable key string, so the
+        // literal below is the *same key* — not a behavioural workaround.
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
         AppLogger.permissions.notice("Accessibility prompt shown")
     }
 }
