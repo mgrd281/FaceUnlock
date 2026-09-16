@@ -15,7 +15,11 @@ public protocol CredentialStoring: Sendable {
     /// Removes the saved password immediately.
     func removePassword() throws
     /// Retrieves the password for a single authorised use.
-    func withPassword<T: Sendable>(_ body: (String) async throws -> T) async throws -> T
+    ///
+    /// Deliberately synchronous and returning a plain `String`: the caller is an
+    /// actor, and handing it a closure to run would mean sending a non-`Sendable`
+    /// capture across an isolation boundary. Callers must not retain the result.
+    func loadPasswordForSingleUse() throws -> String
 }
 
 public struct CredentialStore: CredentialStoring {
@@ -50,19 +54,20 @@ public struct CredentialStore: CredentialStoring {
         AppLogger.keychain.notice("Saved account password removed")
     }
 
-    public func withPassword<T: Sendable>(_ body: (String) async throws -> T) async throws -> T {
+    public func loadPasswordForSingleUse() throws -> String {
         guard var data = try keychain.data(for: .accountPassword) else {
             throw FaceUnlockError.credentialMissing
         }
         defer {
-            // Best-effort scrubbing of the heap copy. Swift `String` may still hold
-            // an internal copy; this limits, but cannot eliminate, the window.
+            // Best-effort scrubbing of the heap copy. The returned `String` is still
+            // an independent copy managed by ARC, so this limits the exposure window
+            // rather than eliminating it — see SECURITY.md.
             data.resetBytes(in: 0..<data.count)
         }
         guard let password = String(data: data, encoding: .utf8) else {
             throw FaceUnlockError.credentialMissing
         }
-        return try await body(password)
+        return password
     }
 }
 

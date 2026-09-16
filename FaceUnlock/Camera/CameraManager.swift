@@ -12,33 +12,85 @@ public protocol CameraManaging: Sendable {
 
 /// Owns the `AVCaptureSession`.
 ///
-/// Power behaviour, which is the main design constraint here:
-/// * The session is created lazily and torn down completely in `stop()`. There is
-///   no idling session, so the camera indicator light is off and the ISP is
-///   powered down whenever FaceUnlock is not actively looking for a face.
-/// * Frames are throttled in the capture callback before anything else happens,
-///   so a 30 fps device costs one `CMTime` comparison per dropped frame.
-/// * `alwaysDiscardsLateVideoFrames` keeps the queue from growing when the
-///   recognition pipeline is briefly slower than the camera.
-public actor CameraManager: CameraManaging {
+/// ## Why this is a queue-confined class rather than an actor
+///
+/// Almost nothing in AVFoundation is `Sendable`: `AVCaptureSession`,
+/// `AVCaptureDevice` and `AVCaptureVideoDataOutput` all are not. Holding them as
+/// actor state means every `nonisolated` hop — the capture callback, a
+/// `DispatchQueue.async` — has to smuggle a non-`Sendable` value across an
+/// isolation boundary, which Swift 6 correctly rejects. Confining all of it to one
+/// serial queue instead keeps every AVFoundation object on a single thread, which
+/// is what AVFoundation wants anyway, and makes the `@unchecked Sendable`
+/// conformance a statement about a real, checkable invariant: **every stored
+/// property below is touched only on `sessionQueue`.**
+///
+/// ## Power behaviour
+///
+/// * The session is created lazily and torn down completely in `stop()` — there is
+///   no idling session, so the camera indicator is off and the ISP is powered down
+///   whenever FaceUnlock is not actively looking for a face.
+/// * Frames are throttled inside the capture callback before anything else
+///   happens, so a dropped frame costs one timestamp comparison.
+/// * `alwaysDiscardsLateVideoFrames` stops the queue growing when the recognition
+///   pipeline is briefly slower than the camera.
+public final class CameraManager: CameraManaging, @unchecked Sendable {
+    private let sessionQueue = DispatchQueue(label: "de.faceunlock.mac.camera", qos: .userInitiated)
+    private let preferredDeviceID: String?
+
+    // MARK: State — only ever touched on `sessionQueue`.
     private var session: AVCaptureSession?
     private var output: AVCaptureVideoDataOutput?
     private var delegate: FrameDelegate?
     private var continuation: AsyncStream<CameraFrame>.Continuation?
-    private var sequence: UInt64 = 0
-    private let sessionQueue = DispatchQueue(label: "de.faceunlock.mac.camera", qos: .userInitiated)
-    private let preferredDeviceID: String?
 
     public init(preferredDeviceID: String? = nil) {
         self.preferredDeviceID = preferredDeviceID
     }
 
     public func isRunning() async -> Bool {
-        session?.isRunning ?? false
+        await withCheckedContinuation { (resumed: CheckedContinuation<Bool, Never>) in
+            sessionQueue.async {
+                resumed.resume(returning: self.session?.isRunning ?? false)
+            }
+        }
     }
 
     public func start(frameRate: Double) async throws -> AsyncStream<CameraFrame> {
-        if session != nil { await stop() }
+        await stop()
+        let interval = 1.0 / max(1.0, frameRate)
+        let stream: AsyncStream<CameraFrame> = try await withCheckedThrowingContinuation { resumed in
+            sessionQueue.async {
+                do {
+                    resumed.resume(returning: try self.startOnQueue(minimumInterval: interval))
+                } catch {
+                    self.teardownOnQueue()
+                    resumed.resume(throwing: error)
+                }
+            }
+        }
+        AppLogger.camera.notice(
+            "Camera started at \(frameRate, format: .fixed(precision: 1), privacy: .public) fps"
+        )
+        return stream
+    }
+
+    public func stop() async {
+        await withCheckedContinuation { (resumed: CheckedContinuation<Void, Never>) in
+            sessionQueue.async {
+                let wasRunning = self.session != nil
+                self.teardownOnQueue()
+                if wasRunning {
+                    AppLogger.camera.notice("Camera stopped and released")
+                }
+                resumed.resume()
+            }
+        }
+    }
+
+    // MARK: - Queue-confined work
+
+    private func startOnQueue(minimumInterval: TimeInterval) throws -> AsyncStream<CameraFrame> {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
 
         guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
             throw FaceUnlockError.cameraPermissionDenied
@@ -52,7 +104,7 @@ public actor CameraManager: CameraManaging {
 
         let session = AVCaptureSession()
         session.beginConfiguration()
-        // 640x480 is ample for a face that fills a useful part of the frame, and it
+        // 640×480 is ample for a face that fills a useful part of the frame, and it
         // keeps both the ISP and the Vision requests cheap.
         session.sessionPreset = .vga640x480
 
@@ -81,79 +133,63 @@ public actor CameraManager: CameraManaging {
         session.addOutput(output)
         session.commitConfiguration()
 
-        let interval = 1.0 / max(1.0, frameRate)
+        // The frames themselves are yielded straight from the capture callback.
+        // `CameraFrame` is `Sendable`, so nothing non-sendable ever leaves this
+        // queue, and there is no task hop per frame.
         let stream = AsyncStream<CameraFrame>(bufferingPolicy: .bufferingNewest(2)) { continuation in
-            let delegate = FrameDelegate(minimumInterval: interval) { [weak self] pixelBuffer, timestamp in
-                guard let self else { return }
-                Task { await self.emit(pixelBuffer: pixelBuffer, timestamp: timestamp) }
+            let delegate = FrameDelegate(minimumInterval: minimumInterval) { frame in
+                continuation.yield(frame)
             }
-            output.setSampleBufferDelegate(delegate, queue: self.sessionQueue)
+            output.setSampleBufferDelegate(delegate, queue: sessionQueue)
             self.delegate = delegate
             self.continuation = continuation
             continuation.onTermination = { [weak self] _ in
                 guard let self else { return }
-                Task { await self.stop() }
+                self.sessionQueue.async { self.teardownOnQueue() }
             }
         }
 
         self.session = session
         self.output = output
-        self.sequence = 0
 
-        await withCheckedContinuation { (resumed: CheckedContinuation<Void, Never>) in
-            sessionQueue.async {
-                session.startRunning()
-                resumed.resume()
-            }
-        }
-
+        session.startRunning()
         guard session.isRunning else {
-            await stop()
             throw FaceUnlockError.cameraStartFailed("The capture session did not start.")
         }
-
-        AppLogger.camera.notice(
-            "Camera started at \(frameRate, format: .fixed(precision: 1), privacy: .public) fps"
-        )
         return stream
     }
 
-    public func stop() async {
-        guard let session else { return }
-        let output = self.output
-        self.session = nil
-        self.output = nil
-        self.delegate = nil
+    private func teardownOnQueue() {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
+        output?.setSampleBufferDelegate(nil, queue: nil)
+        if let session {
+            if session.isRunning { session.stopRunning() }
+            for input in session.inputs { session.removeInput(input) }
+            for existingOutput in session.outputs { session.removeOutput(existingOutput) }
+        }
+        // Finishing the stream re-enters `onTermination`, which hops back onto this
+        // queue and finds nothing left to do.
         continuation?.finish()
         continuation = nil
-
-        await withCheckedContinuation { (resumed: CheckedContinuation<Void, Never>) in
-            sessionQueue.async {
-                output?.setSampleBufferDelegate(nil, queue: nil)
-                if session.isRunning { session.stopRunning() }
-                for input in session.inputs { session.removeInput(input) }
-                for existingOutput in session.outputs { session.removeOutput(existingOutput) }
-                resumed.resume()
-            }
-        }
-        AppLogger.camera.notice("Camera stopped and released")
-    }
-
-    private func emit(pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
-        guard let continuation else { return }
-        sequence &+= 1
-        continuation.yield(CameraFrame(pixelBuffer: pixelBuffer, timestamp: timestamp, sequence: sequence))
+        session = nil
+        output = nil
+        delegate = nil
     }
 }
 
-/// Capture callback. Throttling happens here so that dropped frames cost as
-/// little as possible.
+/// Capture callback.
+///
+/// Throttling and sequence numbering both live here so that a dropped frame costs
+/// as little as possible and so that the `CameraFrame` handed onwards is complete.
+/// All of its state is touched only from the capture queue, which AVFoundation
+/// serialises — that is what the `@unchecked` conformance asserts.
 private final class FrameDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let minimumInterval: TimeInterval
-    private let onFrame: @Sendable (CVPixelBuffer, TimeInterval) -> Void
+    private let onFrame: @Sendable (CameraFrame) -> Void
     private var lastEmitted: TimeInterval = -.greatestFiniteMagnitude
+    private var sequence: UInt64 = 0
 
-    init(minimumInterval: TimeInterval, onFrame: @escaping @Sendable (CVPixelBuffer, TimeInterval) -> Void) {
+    init(minimumInterval: TimeInterval, onFrame: @escaping @Sendable (CameraFrame) -> Void) {
         self.minimumInterval = minimumInterval
         self.onFrame = onFrame
     }
@@ -165,8 +201,11 @@ private final class FrameDelegate: NSObject, AVCaptureVideoDataOutputSampleBuffe
     ) {
         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
         guard timestamp - lastEmitted >= minimumInterval else { return }
+        // Retaining the pixel buffer holds a slot in the capture pool, which is why
+        // the stream buffers at most two frames.
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastEmitted = timestamp
-        onFrame(pixelBuffer, timestamp)
+        sequence &+= 1
+        onFrame(CameraFrame(pixelBuffer: pixelBuffer, timestamp: timestamp, sequence: sequence))
     }
 }

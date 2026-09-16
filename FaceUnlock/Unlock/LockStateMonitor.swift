@@ -45,7 +45,11 @@ public final class LockStateMonitor: LockStateMonitoring, @unchecked Sendable {
     public init() {}
 
     deinit {
-        removeObservers()
+        // `removeObservers()` would capture `self`; the observer tokens are all that
+        // is needed, so they are handed to a static helper instead.
+        let existing = observers
+        observers = []
+        if !existing.isEmpty { Self.unregister(existing) }
     }
 
     public func events() -> AsyncStream<LockEvent> {
@@ -75,23 +79,35 @@ public final class LockStateMonitor: LockStateMonitoring, @unchecked Sendable {
         return (session[Self.screenIsLockedKey] as? Bool) ?? false
     }
 
+    /// Registers the observers on the main actor.
+    ///
+    /// `NSWorkspace`'s notification centre is main-actor work, and `events()` can
+    /// be called from any context — the recognition coordinator is an actor, not
+    /// the main actor — so the registration is hopped explicitly rather than
+    /// assumed to already be on the right thread.
     private func installObservers() {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.installObserversOnMain() }
+        }
+    }
+
+    @MainActor
+    private func installObserversOnMain() {
         let distributed = DistributedNotificationCenter.default()
         let workspace = NSWorkspace.shared.notificationCenter
 
         var created: [NSObjectProtocol] = []
-        created.append(distributed.addObserver(
-            forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: nil
-        ) { [weak self] _ in self?.emit(.screenLocked) })
-        created.append(distributed.addObserver(
-            forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: nil
-        ) { [weak self] _ in self?.emit(.screenUnlocked) })
-        created.append(distributed.addObserver(
-            forName: Notification.Name("com.apple.screensaver.didstart"), object: nil, queue: nil
-        ) { [weak self] _ in self?.emit(.screensaverStarted) })
-        created.append(distributed.addObserver(
-            forName: Notification.Name("com.apple.screensaver.didstop"), object: nil, queue: nil
-        ) { [weak self] _ in self?.emit(.screensaverStopped) })
+        let distributedEvents: [(String, LockEvent)] = [
+            ("com.apple.screenIsLocked", .screenLocked),
+            ("com.apple.screenIsUnlocked", .screenUnlocked),
+            ("com.apple.screensaver.didstart", .screensaverStarted),
+            ("com.apple.screensaver.didstop", .screensaverStopped)
+        ]
+        for (name, event) in distributedEvents {
+            created.append(distributed.addObserver(
+                forName: Notification.Name(name), object: nil, queue: nil
+            ) { [weak self] _ in self?.emit(event) })
+        }
 
         let workspaceEvents: [(NSNotification.Name, LockEvent)] = [
             (NSWorkspace.willSleepNotification, .systemWillSleep),
@@ -107,7 +123,13 @@ public final class LockStateMonitor: LockStateMonitoring, @unchecked Sendable {
             })
         }
 
-        lock.lock(); observers = created; lock.unlock()
+        lock.lock()
+        // A second `events()` call could have raced ahead; keep whichever set was
+        // registered last and discard this one rather than leaking observers.
+        let superseded = observers
+        observers = created
+        lock.unlock()
+        if !superseded.isEmpty { Self.unregister(superseded) }
         AppLogger.unlock.notice("Lock state monitor started")
     }
 
@@ -117,11 +139,29 @@ public final class LockStateMonitor: LockStateMonitoring, @unchecked Sendable {
         observers = []
         lock.unlock()
         guard !existing.isEmpty else { return }
-        for observer in existing {
-            DistributedNotificationCenter.default().removeObserver(observer)
-            NSWorkspace.shared.notificationCenter.removeObserver(observer)
-        }
+        Self.unregister(existing)
         AppLogger.unlock.notice("Lock state monitor stopped")
+    }
+
+    /// Observer tokens are opaque objects with no `Sendable` conformance. They are
+    /// only ever created and released on the main actor and are never read from
+    /// anywhere else, which is what this box asserts.
+    private struct ObserverTokens: @unchecked Sendable {
+        let tokens: [NSObjectProtocol]
+    }
+
+    /// Static so that it can also be called from `deinit`, where `self` must not
+    /// be captured by an escaping closure.
+    private static func unregister(_ observers: [NSObjectProtocol]) {
+        let box = ObserverTokens(tokens: observers)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                for observer in box.tokens {
+                    DistributedNotificationCenter.default().removeObserver(observer)
+                    NSWorkspace.shared.notificationCenter.removeObserver(observer)
+                }
+            }
+        }
     }
 
     private func emit(_ event: LockEvent) {

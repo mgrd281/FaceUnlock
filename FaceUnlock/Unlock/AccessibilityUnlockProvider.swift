@@ -1,4 +1,3 @@
-import AppKit
 import ApplicationServices
 import Foundation
 
@@ -49,7 +48,7 @@ public actor AccessibilityUnlockProvider: UnlockProvider {
 
     public func capability() async -> SessionUnlockCapability {
         guard isEnabled() else { return .unsupported }
-        let verification = validator.verifyLockScreen()
+        let verification = await validator.verifyLockScreen()
         // Accessibility trust is the only precondition that can be evaluated while
         // the screen is unlocked; the rest are lock-screen specific.
         return verification.accessibilityTrusted ? .limited : .unsupported
@@ -58,7 +57,7 @@ public actor AccessibilityUnlockProvider: UnlockProvider {
     public func canUnlockCurrentState() async -> Bool {
         guard isEnabled() else { return false }
         guard credentials.hasSavedPassword else { return false }
-        let verification = validator.verifyLockScreen()
+        let verification = await validator.verifyLockScreen()
         guard verification.allowsCredentialEntry else {
             if let reason = verification.refusalReason {
                 AppLogger.unlock.notice(
@@ -76,18 +75,19 @@ public actor AccessibilityUnlockProvider: UnlockProvider {
         // Re-verify immediately before acting. The state could have changed between
         // `canUnlockCurrentState()` and here, and entering a password into the wrong
         // window is the single worst thing this app could do.
-        let verification = validator.verifyLockScreen()
+        let verification = await validator.verifyLockScreen()
         guard verification.allowsCredentialEntry else {
             let reason = verification.refusalReason ?? "an unknown precondition failed"
             AppLogger.unlock.error("Assisted entry aborted: \(reason, privacy: .public)")
             throw FaceUnlockError.unlockVerificationFailed(reason)
         }
 
-        guard let loginWindow = NSWorkspace.shared.frontmostApplication,
-              loginWindow.bundleIdentifier == "com.apple.loginwindow" else {
-            throw FaceUnlockError.unlockVerificationFailed("the login window is no longer frontmost")
+        // The verification already identified the process cryptographically; reusing
+        // its pid means there is no window in which a different process could take
+        // the foreground between the check and the write.
+        guard let pid = verification.frontmostProcessID else {
+            throw FaceUnlockError.unlockVerificationFailed("the login window could not be identified")
         }
-        let pid = loginWindow.processIdentifier
 
         guard let field = try secureTextField(inApplicationWithPID: pid) else {
             throw FaceUnlockError.unlockVerificationFailed(
@@ -97,23 +97,23 @@ public actor AccessibilityUnlockProvider: UnlockProvider {
 
         // Last check before the secret is materialised: if a secure input context
         // has appeared in the meantime, stop without ever reading the Keychain.
-        guard !validator.verifyLockScreen().secureInputActive else {
+        let recheck = await validator.verifyLockScreen()
+        guard !recheck.secureInputActive else {
             throw FaceUnlockError.unlockVerificationFailed(
                 "a secure input context became active while preparing to authenticate"
             )
         }
 
-        try await credentials.withPassword { password in
-            let status = AXUIElementSetAttributeValue(
-                field, kAXValueAttribute as CFString, password as CFTypeRef
+        let password = try credentials.loadPasswordForSingleUse()
+        let status = AXUIElementSetAttributeValue(
+            field, kAXValueAttribute as CFString, password as CFTypeRef
+        )
+        guard status == .success else {
+            throw FaceUnlockError.unlockVerificationFailed(
+                "the password field refused the value (AXError \(status.rawValue))"
             )
-            guard status == .success else {
-                throw FaceUnlockError.unlockVerificationFailed(
-                    "the password field refused the value (AXError \(status.rawValue))"
-                )
-            }
-            try Self.confirm(field: field)
         }
+        try Self.confirm(field: field)
         AppLogger.unlock.notice("Assisted lock-screen entry completed")
     }
 

@@ -48,14 +48,14 @@ final class CredentialStoreTests: XCTestCase {
     func testRetrievingTheStoredPassword() async throws {
         let (store, _) = makeStore(expected: "hunter2")
         try await store.validateAndStore(password: "hunter2", shortName: "tester")
-        let seen = try await store.withPassword { $0 }
+        let seen = try store.loadPasswordForSingleUse()
         XCTAssertEqual(seen, "hunter2")
     }
 
-    func testRetrievingWithoutAStoredPasswordThrows() async {
+    func testRetrievingWithoutAStoredPasswordThrows() {
         let (store, _) = makeStore(expected: "hunter2")
         do {
-            _ = try await store.withPassword { $0 }
+            _ = try store.loadPasswordForSingleUse()
             XCTFail("expected credentialMissing")
         } catch let error as FaceUnlockError {
             XCTAssertEqual(error, .credentialMissing)

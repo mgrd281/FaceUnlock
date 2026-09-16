@@ -163,12 +163,12 @@ final class StubCredentialStore: CredentialStoring, @unchecked Sendable {
 
     func removePassword() throws { lock.lock(); stored = nil; lock.unlock() }
 
-    func withPassword<T: Sendable>(_ body: (String) async throws -> T) async throws -> T {
+    func loadPasswordForSingleUse() throws -> String {
         lock.lock()
         readCount += 1
         let value = stored
         lock.unlock()
         guard let value else { throw FaceUnlockError.credentialMissing }
-        return try await body(value)
+        return value
     }
 }

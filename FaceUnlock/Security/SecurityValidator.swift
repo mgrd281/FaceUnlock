@@ -15,11 +15,14 @@ public struct LockScreenVerification: Equatable, Sendable {
     public var screenIsLocked: Bool
     /// This process belongs to the session that owns the console.
     public var isOnConsoleSession: Bool
-    /// A secure input context is active (the system is capturing keystrokes
-    /// exclusively — typically the password field of loginwindow).
+    /// A secure input context is active — the system is capturing keystrokes
+    /// exclusively, which is typically the password field of `loginwindow`.
     public var secureInputActive: Bool
-    /// The frontmost application, when one is visible to us at all.
+    /// Bundle identifier of the frontmost application, when one is visible to us.
     public var frontmostBundleIdentifier: String?
+    /// Process identifier of that application, carried so that a provider never has
+    /// to look the process up a second time and risk acting on a different one.
+    public var frontmostProcessID: pid_t?
     /// The frontmost application satisfied an `anchor apple` code requirement for
     /// `com.apple.loginwindow`.
     public var frontmostIsAuthenticLoginWindow: Bool
@@ -31,6 +34,7 @@ public struct LockScreenVerification: Equatable, Sendable {
         isOnConsoleSession: Bool,
         secureInputActive: Bool,
         frontmostBundleIdentifier: String?,
+        frontmostProcessID: pid_t? = nil,
         frontmostIsAuthenticLoginWindow: Bool,
         accessibilityTrusted: Bool
     ) {
@@ -38,15 +42,16 @@ public struct LockScreenVerification: Equatable, Sendable {
         self.isOnConsoleSession = isOnConsoleSession
         self.secureInputActive = secureInputActive
         self.frontmostBundleIdentifier = frontmostBundleIdentifier
+        self.frontmostProcessID = frontmostProcessID
         self.frontmostIsAuthenticLoginWindow = frontmostIsAuthenticLoginWindow
         self.accessibilityTrusted = accessibilityTrusted
     }
 
     /// The conditions under which credential entry could even be contemplated.
     ///
-    /// Note that `secureInputActive` being true is what makes synthetic keystroke
-    /// delivery impossible on a current macOS: it is recorded here so the reason
-    /// for refusing is precise rather than a guess. See `KNOWN_LIMITATIONS.md`.
+    /// `secureInputActive` being true is what makes synthetic keystroke delivery
+    /// impossible on a current macOS; it is recorded here so that the reason for
+    /// refusing is precise rather than a guess. See `KNOWN_LIMITATIONS.md`.
     public var allowsCredentialEntry: Bool {
         screenIsLocked
             && isOnConsoleSession
@@ -69,10 +74,22 @@ public struct LockScreenVerification: Equatable, Sendable {
         }
         return nil
     }
+
+    /// Convenience for tests: nothing is satisfied.
+    public static let nothingSatisfied = LockScreenVerification(
+        screenIsLocked: false,
+        isOnConsoleSession: false,
+        secureInputActive: false,
+        frontmostBundleIdentifier: nil,
+        frontmostIsAuthenticLoginWindow: false,
+        accessibilityTrusted: false
+    )
 }
 
 public protocol SecurityValidating: Sendable {
-    func verifyLockScreen() -> LockScreenVerification
+    /// Asynchronous because identifying the frontmost application means touching
+    /// AppKit, which is main-actor work. Only `Sendable` values cross back.
+    func verifyLockScreen() async -> LockScreenVerification
     func isAccessibilityTrusted() -> Bool
     func isScreenLocked() -> Bool
 }
@@ -83,19 +100,34 @@ public struct SecurityValidator: SecurityValidating {
 
     public init() {}
 
-    public func verifyLockScreen() -> LockScreenVerification {
+    public func verifyLockScreen() async -> LockScreenVerification {
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         let locked = (session?[Self.screenIsLockedKey] as? Bool) ?? false
         let onConsole = (session?[kCGSessionOnConsoleKey as String] as? Bool) ?? false
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        let bundleID = frontmost?.bundleIdentifier
+
+        // `NSRunningApplication` is not `Sendable`, so only the two values that are
+        // actually needed are read on the main actor and returned.
+        let frontmost: (bundleID: String?, pid: pid_t)? = await MainActor.run {
+            NSWorkspace.shared.frontmostApplication.map { ($0.bundleIdentifier, $0.processIdentifier) }
+        }
+
+        let authentic: Bool
+        if let frontmost, frontmost.bundleID == "com.apple.loginwindow" {
+            authentic = processSatisfiesRequirement(
+                pid: frontmost.pid,
+                requirement: "anchor apple and identifier \"com.apple.loginwindow\""
+            )
+        } else {
+            authentic = false
+        }
 
         return LockScreenVerification(
             screenIsLocked: locked,
             isOnConsoleSession: onConsole,
             secureInputActive: IsSecureEventInputEnabled(),
-            frontmostBundleIdentifier: bundleID,
-            frontmostIsAuthenticLoginWindow: isAuthenticLoginWindow(frontmost),
+            frontmostBundleIdentifier: frontmost?.bundleID,
+            frontmostProcessID: frontmost?.pid,
+            frontmostIsAuthenticLoginWindow: authentic,
             accessibilityTrusted: isAccessibilityTrusted()
         )
     }
@@ -112,15 +144,6 @@ public struct SecurityValidator: SecurityValidating {
     /// Bundle identifiers are trivially forgeable, so identity is confirmed
     /// cryptographically: the running process must satisfy a designated
     /// requirement anchored to Apple's own certificate authority.
-    private func isAuthenticLoginWindow(_ application: NSRunningApplication?) -> Bool {
-        guard let application,
-              application.bundleIdentifier == "com.apple.loginwindow" else { return false }
-        return processSatisfiesRequirement(
-            pid: application.processIdentifier,
-            requirement: "anchor apple and identifier \"com.apple.loginwindow\""
-        )
-    }
-
     func processSatisfiesRequirement(pid: pid_t, requirement: String) -> Bool {
         var requirementRef: SecRequirement?
         guard SecRequirementCreateWithString(
@@ -162,19 +185,7 @@ public final class StubSecurityValidator: SecurityValidating, @unchecked Sendabl
         set { lock.lock(); _verification = newValue; lock.unlock() }
     }
 
-    public func verifyLockScreen() -> LockScreenVerification { verification }
+    public func verifyLockScreen() async -> LockScreenVerification { verification }
     public func isAccessibilityTrusted() -> Bool { verification.accessibilityTrusted }
     public func isScreenLocked() -> Bool { verification.screenIsLocked }
-}
-
-extension LockScreenVerification {
-    /// Convenience for tests: nothing is satisfied.
-    public static let nothingSatisfied = LockScreenVerification(
-        screenIsLocked: false,
-        isOnConsoleSession: false,
-        secureInputActive: false,
-        frontmostBundleIdentifier: nil,
-        frontmostIsAuthenticLoginWindow: false,
-        accessibilityTrusted: false
-    )
 }

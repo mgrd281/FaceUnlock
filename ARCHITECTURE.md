@@ -50,16 +50,24 @@ Swift 6 language mode, strict concurrency.
 
 | Kind | Types | Why |
 |---|---|---|
-| **Actors** | `CameraManager`, `RecognitionCoordinator`, `EnrollmentCoordinator`, `UnlockCoordinator`, `PresenceUnlockProvider`, `AccessibilityUnlockProvider`, `ManualConfirmationUnlockProvider` | Everything that owns mutable state a race could corrupt: the capture session, the attempt state machine, the in-flight-unlock flag, the power assertion. |
+| **Actors** | `RecognitionCoordinator`, `EnrollmentCoordinator`, `UnlockCoordinator`, `PresenceUnlockProvider`, `AccessibilityUnlockProvider`, `ManualConfirmationUnlockProvider` | Everything that owns mutable state a race could corrupt: the attempt state machine, the in-flight-unlock flag, the power assertion. |
+| **Queue-confined class** | `CameraManager` | Almost nothing in AVFoundation is `Sendable`. Making the capture session actor state would force non-`Sendable` values across every isolation hop; confining them all to one serial queue keeps them on a single thread — which AVFoundation wants anyway — and makes the `@unchecked Sendable` conformance a real, checkable invariant. |
 | **`@MainActor`** | `AppEnvironment`, `Preferences`, `OnboardingModel`, `WindowPresenter`, `AppDelegate`, all SwiftUI views | UI state, `UserDefaults` mirroring, AppKit window handling. |
 | **Value types** | `RecognitionStateMachine`, all models | No identity, no sharing, trivially `Sendable`. |
 | **`@unchecked Sendable`** | `CameraFrame`, `PreviewImage`, `RecognitionProgress`, `FaceDetector`, `FaceQualityAnalyzer`, `LivenessAnalyzer`, the lock-protected stubs | Each one wraps either an immutable Core Foundation / Core Graphics object that is uniquely owned by one consumer, or mutable state guarded by an `NSLock`. Every occurrence carries a comment saying which. |
 
 Background `@Sendable` closures never reach into main-actor state. Where one
 needs a value that lives on the main actor, the value is mirrored into an
-`Atomic` box or read from `UserDefaults`, which is thread-safe. Using
-`MainActor.assumeIsolated` from a background context would trap, so it is not
-used.
+`Atomic` box or read from `UserDefaults`, which is thread-safe. Calling
+`MainActor.assumeIsolated` from a genuinely background context would trap, so it
+appears only inside `DispatchQueue.main.async`, where the assumption is true by
+construction.
+
+Two places deliberately hop to the main actor because AppKit lives there:
+`SecurityValidator.verifyLockScreen()` reads the frontmost application's bundle
+identifier and pid — and returns only those two `Sendable` values, never the
+`NSRunningApplication` — and `LockStateMonitor` registers and removes its
+`NSWorkspace` observers there.
 
 ## State machine
 

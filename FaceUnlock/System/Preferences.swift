@@ -1,6 +1,26 @@
 import Foundation
 import Observation
 
+/// `UserDefaults` keys.
+///
+/// Declared at file scope rather than nested inside `Preferences` so that it is
+/// unambiguously free of the class's `@MainActor` isolation and can be read from
+/// the `nonisolated` static accessors below.
+private enum Key {
+    static let unlockEnabled = "unlockEnabled"
+    static let showInDock = "showInDock"
+    static let showRecognitionAnimation = "showRecognitionAnimation"
+    static let hasCompletedOnboarding = "hasCompletedOnboarding"
+    static let protectSettings = "protectSettingsWithSystemAuthentication"
+    static let reauthenticateBeforeEnrollment = "reauthenticateBeforeEnrollment"
+    static let analyticsEnabled = "analyticsEnabled"
+    static let automaticUpdateChecks = "automaticUpdateChecks"
+    static let recognitionSettings = "recognitionSettings"
+    static let pausedUntil = "pausedUntil"
+    static let lockWhenAbsent = "lockWhenAbsent"
+    static let allowAssistedLockScreenEntry = "allowAssistedLockScreenEntry"
+}
+
 /// Non-secret user preferences, persisted to `UserDefaults`.
 ///
 /// Everything here is safe to keep in `UserDefaults`: no credentials, no
@@ -16,21 +36,6 @@ import Observation
 @MainActor
 @Observable
 public final class Preferences {
-    private enum Key {
-        static let unlockEnabled = "unlockEnabled"
-        static let showInDock = "showInDock"
-        static let showRecognitionAnimation = "showRecognitionAnimation"
-        static let hasCompletedOnboarding = "hasCompletedOnboarding"
-        static let protectSettings = "protectSettingsWithSystemAuthentication"
-        static let reauthenticateBeforeEnrollment = "reauthenticateBeforeEnrollment"
-        static let analyticsEnabled = "analyticsEnabled"
-        static let automaticUpdateChecks = "automaticUpdateChecks"
-        static let recognitionSettings = "recognitionSettings"
-        static let pausedUntil = "pausedUntil"
-        static let lockWhenAbsent = "lockWhenAbsent"
-        static let allowAssistedLockScreenEntry = "allowAssistedLockScreenEntry"
-    }
-
     @ObservationIgnored private let defaults: UserDefaults
 
     @ObservationIgnored private var storedUnlockEnabled: Bool
@@ -196,11 +201,18 @@ public final class Preferences {
     // `UserDefaults` is safe to read from any thread, so background `@Sendable`
     // closures use these instead of hopping to the main actor.
 
-    public static func assistedLockScreenEntryIsEnabled(defaults: UserDefaults = .standard) -> Bool {
+    /// `nonisolated` on purpose: members of a `@MainActor` type are main-actor
+    /// isolated by default, including statics, and these are called from
+    /// background `@Sendable` closures.
+    public nonisolated static func assistedLockScreenEntryIsEnabled(
+        defaults: UserDefaults = .standard
+    ) -> Bool {
         defaults.bool(forKey: Key.allowAssistedLockScreenEntry)
     }
 
-    public static func automaticUpdateChecksAreEnabled(defaults: UserDefaults = .standard) -> Bool {
+    public nonisolated static func automaticUpdateChecksAreEnabled(
+        defaults: UserDefaults = .standard
+    ) -> Bool {
         defaults.bool(forKey: Key.automaticUpdateChecks)
     }
 
