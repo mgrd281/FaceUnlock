@@ -132,3 +132,59 @@ final class RecognitionStateMachineTests: XCTestCase {
         XCTAssertFalse(AppStatus.unlocked.isActive)
     }
 }
+
+/// Enrolment pose geometry.
+///
+/// The security-relevant property is that "left" and "right" (and "up" and
+/// "down") capture two genuinely *different* head orientations. That must hold
+/// without asserting Vision's sign convention for `yaw` and `pitch`, which is
+/// exactly what the coordinator's direction calibration provides.
+final class EnrollmentPoseTests: XCTestCase {
+    func testOpposedPairsShareAnAxis() {
+        XCTAssertEqual(EnrollmentPose.left.axis, .yaw)
+        XCTAssertEqual(EnrollmentPose.right.axis, .yaw)
+        XCTAssertEqual(EnrollmentPose.up.axis, .pitch)
+        XCTAssertEqual(EnrollmentPose.down.axis, .pitch)
+        XCTAssertEqual(EnrollmentPose.straight.axis, .none)
+        XCTAssertEqual(EnrollmentPose.neutralExpression.axis, .none)
+    }
+
+    func testExactlyOnePoseOfEachPairIsTheOpposite() {
+        let yawPoses = EnrollmentPose.allCases.filter { $0.axis == .yaw }
+        let pitchPoses = EnrollmentPose.allCases.filter { $0.axis == .pitch }
+        XCTAssertEqual(yawPoses.filter(\.isOpposite).count, 1)
+        XCTAssertEqual(pitchPoses.filter(\.isOpposite).count, 1)
+    }
+
+    /// The first pose of a pair must be recorded before its partner is asked for,
+    /// otherwise the opposite-sign requirement has nothing to compare against.
+    func testTheFirstOfEachPairComesFirst() {
+        let order = EnrollmentPose.allCases
+        func index(_ pose: EnrollmentPose) -> Int {
+            order.firstIndex(of: pose) ?? Int.max
+        }
+        XCTAssertLessThan(index(.left), index(.right))
+        XCTAssertLessThan(index(.up), index(.down))
+    }
+
+    func testDirectionalPosesRequireAMeaningfulLean() {
+        for pose in EnrollmentPose.allCases where pose.axis != .none {
+            XCTAssertGreaterThan(pose.minimumLean, 0.1, "\(pose) should need a real turn")
+            // Well inside the quality gate's own limits, so an accepted frame is
+            // never one the analyser would have rejected as an extreme pose.
+            XCTAssertLessThan(pose.minimumLean, 0.5)
+        }
+        XCTAssertEqual(EnrollmentPose.straight.minimumLean, 0)
+    }
+
+    func testEveryPoseAsksForTheSameNumberOfSamples() {
+        let counts = Set(EnrollmentPose.allCases.map(\.requiredSamples))
+        XCTAssertEqual(counts.count, 1)
+        XCTAssertGreaterThanOrEqual(counts.first ?? 0, 3)
+    }
+
+    func testEveryPoseHasDistinctUserFacingText() {
+        XCTAssertEqual(Set(EnrollmentPose.allCases.map(\.title)).count, EnrollmentPose.allCases.count)
+        XCTAssertEqual(Set(EnrollmentPose.allCases.map(\.shortTitle)).count, EnrollmentPose.allCases.count)
+    }
+}

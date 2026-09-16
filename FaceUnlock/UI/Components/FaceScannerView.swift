@@ -49,6 +49,9 @@ public struct FaceScannerView: View {
     private let image: CGImage?
     private let progress: Double
     private let cue: Cue?
+    /// How far the *current* step has got, when there is one. Fills the cue arc,
+    /// so the highlighted edge answers "am I making progress on this pose?".
+    private let cueProgress: Double?
     private let status: Status
     private let diameter: CGFloat
     private let accent: Color
@@ -57,13 +60,14 @@ public struct FaceScannerView: View {
     @State private var pulse = false
 
     private let tickCount = 60
-    private var ringRadius: CGFloat { diameter / 2 + 24 }
-    private var outerSize: CGFloat { diameter + 120 }
+    private var ringRadius: CGFloat { diameter / 2 + 20 }
+    private var outerSize: CGFloat { diameter + 92 }
 
     public init(
         image: CGImage?,
         progress: Double,
         cue: Cue?,
+        cueProgress: Double? = nil,
         status: Status,
         diameter: CGFloat = 220,
         accent: Color = .accentColor
@@ -71,6 +75,7 @@ public struct FaceScannerView: View {
         self.image = image
         self.progress = min(1, max(0, progress))
         self.cue = cue
+        self.cueProgress = cueProgress.map { min(1, max(0, $0)) }
         self.status = status
         self.diameter = diameter
         self.accent = accent
@@ -97,7 +102,7 @@ public struct FaceScannerView: View {
     private var halo: some View {
         Circle()
             .fill(statusColor.opacity(status == .idle ? 0.04 : 0.12))
-            .frame(width: diameter + 96, height: diameter + 96)
+            .frame(width: diameter + 72, height: diameter + 72)
             .blur(radius: 28)
     }
 
@@ -116,30 +121,38 @@ public struct FaceScannerView: View {
     @ViewBuilder
     private var cueOverlay: some View {
         if let cue, cue != .center {
-            // A short glowing arc centred on the target edge. `trim` starts at three
-            // o'clock, so the rotation places the arc's midpoint at `cue.angle`.
+            // `trim` starts at three o'clock, so the rotation places the arc's
+            // midpoint on the target edge.
+            let span = 0.16
+            let rotation = cue.angle - span / 2 * 360
+
             Circle()
-                .trim(from: 0, to: 0.14)
-                .stroke(accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .trim(from: 0, to: span)
+                .stroke(Color.white.opacity(0.14), style: StrokeStyle(lineWidth: 7, lineCap: .round))
                 .frame(width: ringRadius * 2, height: ringRadius * 2)
-                .rotationEffect(.degrees(cue.angle - 0.07 * 360))
-                .blur(radius: 2)
-                .opacity(pulseOpacity)
-                .animation(pulseAnimation, value: pulse)
+                .rotationEffect(.degrees(rotation))
+
+            Circle()
+                .trim(from: 0, to: span * (cueProgress ?? 1))
+                .stroke(accent, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                .frame(width: ringRadius * 2, height: ringRadius * 2)
+                .rotationEffect(.degrees(rotation))
+                .opacity(cueProgress == nil ? pulseOpacity : 1)
+                .animation(cueProgress == nil ? pulseAnimation : .easeOut(duration: 0.25), value: pulse)
 
             Image(systemName: cue.symbolName)
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(accent)
                 .offset(
-                    x: cos(cue.angle * .pi / 180) * (ringRadius + 34),
-                    y: sin(cue.angle * .pi / 180) * (ringRadius + 34)
+                    x: cos(cue.angle * .pi / 180) * (ringRadius + 22),
+                    y: sin(cue.angle * .pi / 180) * (ringRadius + 22)
                 )
                 .opacity(pulseOpacity)
                 .animation(pulseAnimation, value: pulse)
         } else if cue == .center {
             Circle()
                 .strokeBorder(accent.opacity(0.7), lineWidth: 2)
-                .frame(width: diameter + 14, height: diameter + 14)
+                .frame(width: diameter + 12, height: diameter + 12)
                 .opacity(pulseOpacity)
                 .animation(pulseAnimation, value: pulse)
         }

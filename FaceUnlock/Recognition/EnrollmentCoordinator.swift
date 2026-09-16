@@ -105,6 +105,7 @@ public actor EnrollmentCoordinator {
         var poseTags: [EnrollmentPose] = []
         var captured: [EnrollmentPose: Int] = [:]
         var stepIndex = 0
+        var directions = DirectionCalibration()
         let steps = EnrollmentPose.allCases
         /// Descriptors captured for the current step, used to reject near-duplicates.
         var currentStepEmbeddings: [FaceEmbedding] = []
@@ -132,8 +133,7 @@ public actor EnrollmentCoordinator {
                 continue
             }
 
-            let poseDistance = measured.pose.angularDistance(to: step.targetPose)
-            guard poseDistance <= step.tolerance else {
+            guard directions.matches(step: step, pose: measured.pose) else {
                 emit(
                     EnrollmentUpdate(
                         currentStep: step,
@@ -147,6 +147,7 @@ public actor EnrollmentCoordinator {
                 )
                 continue
             }
+            directions.record(step: step, pose: measured.pose)
 
             guard let embedding = try? embedder.embedding(for: face, in: frame) else {
                 emit(
@@ -302,13 +303,61 @@ public actor EnrollmentCoordinator {
         updateContinuation?.yield(update)
     }
 
-    private static func guidance(for step: EnrollmentPose, measured: FacePose) -> String {
-        let target = step.targetPose
-        let yawDelta = measured.yaw - target.yaw
-        let pitchDelta = measured.pitch - target.pitch
-        if abs(yawDelta) > abs(pitchDelta) {
-            return yawDelta > 0 ? "Turn a little back to your left." : "Turn a little further to your right."
+    /// Learns which sign of `yaw` and `pitch` the user produces for the first pose
+    /// of each opposed pair, and requires the opposite sign for its partner.
+    ///
+    /// This is what lets enrolment work without asserting Vision's sign
+    /// convention. The security-relevant property is that "left" and "right"
+    /// capture two genuinely different profiles, and that holds whichever way the
+    /// axis happens to point.
+    private struct DirectionCalibration {
+        private var yawSign: Double?
+        private var pitchSign: Double?
+
+        func matches(step: EnrollmentPose, pose: FacePose) -> Bool {
+            switch step.axis {
+            case .none:
+                return abs(pose.yaw) <= step.centredTolerance
+                    && abs(pose.pitch) <= step.centredTolerance
+            case .yaw:
+                return leans(value: pose.yaw, step: step, recorded: yawSign)
+            case .pitch:
+                return leans(value: pose.pitch, step: step, recorded: pitchSign)
+            }
         }
-        return pitchDelta > 0 ? "Lower your chin slightly." : "Raise your chin slightly."
+
+        mutating func record(step: EnrollmentPose, pose: FacePose) {
+            guard !step.isOpposite else { return }
+            switch step.axis {
+            case .none: return
+            case .yaw: if yawSign == nil { yawSign = pose.yaw < 0 ? -1 : 1 }
+            case .pitch: if pitchSign == nil { pitchSign = pose.pitch < 0 ? -1 : 1 }
+            }
+        }
+
+        private func leans(value: Double, step: EnrollmentPose, recorded: Double?) -> Bool {
+            guard abs(value) >= step.minimumLean else { return false }
+            let sign: Double = value < 0 ? -1 : 1
+            guard let recorded else { return true }
+            return step.isOpposite ? sign != recorded : sign == recorded
+        }
+    }
+
+    /// Magnitude-only guidance.
+    ///
+    /// The step's own title already names the direction; repeating a direction
+    /// here produced contradictory instructions on screen, and would be a guess
+    /// about Vision's sign convention besides. This says only how far there is
+    /// left to go.
+    private static func guidance(for step: EnrollmentPose, measured: FacePose) -> String {
+        switch step.axis {
+        case .none:
+            return "Face the camera and hold still."
+        case .yaw, .pitch:
+            let value = step.axis == .yaw ? abs(measured.yaw) : abs(measured.pitch)
+            if value < step.minimumLean * 0.4 { return "Keep going — a bit further." }
+            if value < step.minimumLean { return "Almost there." }
+            return "Hold it right there."
+        }
     }
 }

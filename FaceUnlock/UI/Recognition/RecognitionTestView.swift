@@ -27,8 +27,9 @@ public struct RecognitionTestView: View {
                     image: environment.progress.preview?.image,
                     progress: matchProgress,
                     cue: cue,
+                    cueProgress: environment.progress.activeChallenge == nil ? nil : matchProgress,
                     status: scannerStatus,
-                    diameter: inNotch ? 200 : 220,
+                    diameter: inNotch ? 190 : 220,
                     accent: inNotch ? .green : .accentColor
                 )
 

@@ -22,8 +22,9 @@ struct EnrollmentStepView: View {
                 image: model.previewImage,
                 progress: update?.progress ?? 0,
                 cue: cue,
+                cueProgress: currentStepProgress,
                 status: scannerStatus,
-                diameter: inNotch ? 200 : 220,
+                diameter: inNotch ? 190 : 220,
                 accent: accent
             )
 
@@ -35,7 +36,7 @@ struct EnrollmentStepView: View {
                     .foregroundStyle(.secondary)
             }
             .multilineTextAlignment(.center)
-            .frame(minHeight: 48)
+            .frame(minHeight: 44)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.updatesFrequently)
 
@@ -69,6 +70,14 @@ struct EnrollmentStepView: View {
         return update.guidance
     }
 
+    /// How far the pose being asked for has got, 0...1.
+    private var currentStepProgress: Double? {
+        guard let update, !update.isComplete, model.isWorking else { return nil }
+        let step = update.currentStep
+        let captured = update.capturedByStep[step] ?? 0
+        return Double(captured) / Double(step.requiredSamples)
+    }
+
     private var cue: FaceScannerView.Cue? {
         guard let update, !update.isComplete, model.isWorking else { return nil }
         switch update.currentStep {
@@ -91,6 +100,7 @@ struct EnrollmentStepView: View {
     private var controls: some View {
         if model.isWorking {
             Button("Stop") { model.cancelWork() }
+                .secondaryActionStyle(inNotch: inNotch)
                 .controlSize(.large)
         } else if update?.isComplete == true {
             Text("Press Continue to calibrate.")
@@ -130,7 +140,7 @@ struct CalibrationStepView: View {
                 progress: model.calibrationProgress,
                 cue: model.isWorking ? .center : nil,
                 status: scannerStatus,
-                diameter: inNotch ? 200 : 220,
+                diameter: inNotch ? 190 : 220,
                 accent: inNotch ? .green : .accentColor
             )
 
@@ -186,6 +196,7 @@ struct CalibrationStepView: View {
     private var controls: some View {
         if model.isWorking {
             Button("Stop") { model.cancelWork() }
+                .secondaryActionStyle(inNotch: inNotch)
                 .controlSize(.large)
         } else {
             Button {

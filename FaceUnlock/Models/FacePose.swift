@@ -79,19 +79,47 @@ public enum EnrollmentPose: String, CaseIterable, Codable, Sendable, Identifiabl
         }
     }
 
-    /// The pose the sample is expected to land near, in radians.
-    public var targetPose: FacePose {
+    /// Which head-rotation axis this step exercises.
+    public enum Axis: String, Codable, Sendable {
+        /// Face the camera; both axes must be near zero.
+        case none
+        case yaw
+        case pitch
+    }
+
+    public var axis: Axis {
         switch self {
-        case .straight, .neutralExpression: return FacePose()
-        case .left: return FacePose(yaw: -0.30)
-        case .right: return FacePose(yaw: 0.30)
-        case .up: return FacePose(pitch: 0.22)
-        case .down: return FacePose(pitch: -0.22)
+        case .straight, .neutralExpression: return .none
+        case .left, .right: return .yaw
+        case .up, .down: return .pitch
         }
     }
 
-    /// How far the measured pose may deviate from `targetPose` and still count.
-    public var tolerance: Double { 0.22 }
+    /// True for the second pose of an opposed pair, which must lean the opposite
+    /// way to the first.
+    public var isOpposite: Bool {
+        self == .right || self == .down
+    }
+
+    /// How far the head must lean, in radians, for this step to count.
+    ///
+    /// Deliberately expressed as a magnitude rather than a signed target angle.
+    /// Vision's sign convention for `yaw` and `pitch` is not something to guess
+    /// at: if it were assumed backwards, the "turn left" step could never be
+    /// satisfied no matter how far the user turned. Instead the coordinator
+    /// records whichever sign the user produces for the first pose of a pair and
+    /// requires the opposite sign for its partner — which is the property that
+    /// actually matters, since the point is to capture two distinct profiles.
+    public var minimumLean: Double {
+        switch axis {
+        case .none: return 0
+        case .yaw: return 0.20
+        case .pitch: return 0.14
+        }
+    }
+
+    /// For `.none` steps, how near to centred the head must be.
+    public var centredTolerance: Double { 0.15 }
 
     /// How many accepted samples this step requires.
     public var requiredSamples: Int { 3 }

@@ -186,6 +186,38 @@ struct NotchPrimaryButtonStyle: ButtonStyle {
     }
 }
 
+/// A quiet stroked capsule, for the action that stops what is running.
+struct NotchSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.medium))
+            .foregroundStyle(Color.white.opacity(configuration.isPressed ? 0.55 : 0.9))
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .background(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
+            .contentShape(Capsule())
+    }
+}
+
+/// Chooses between the notch's stroked capsule and the standard bordered button.
+struct SecondaryActionStyling: ViewModifier {
+    let inNotch: Bool
+
+    func body(content: Content) -> some View {
+        if inNotch {
+            content.buttonStyle(NotchSecondaryButtonStyle())
+        } else {
+            content.buttonStyle(.bordered)
+        }
+    }
+}
+
+extension View {
+    func secondaryActionStyle(inNotch: Bool) -> some View {
+        modifier(SecondaryActionStyling(inNotch: inNotch))
+    }
+}
+
 /// Chooses between the notch's filled green button and the standard prominent one.
 struct PrimaryActionStyling: ViewModifier {
     let inNotch: Bool
