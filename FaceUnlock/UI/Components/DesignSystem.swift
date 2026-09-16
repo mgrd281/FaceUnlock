@@ -22,7 +22,7 @@ public enum Design {
     }
 
     public static let menuWidth: CGFloat = 320
-    public static let assistantSize = CGSize(width: 720, height: 560)
+    public static let assistantSize = CGSize(width: 820, height: 600)
 }
 
 /// A grouped surface used throughout Settings and the assistant.

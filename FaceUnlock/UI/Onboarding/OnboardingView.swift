@@ -112,21 +112,32 @@ struct StepIndicator: View {
                 let isCurrent = step == current
                 HStack(spacing: Design.Spacing.tight) {
                     Circle()
-                        .fill(isDone ? Color.accentColor : (isCurrent ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.25)))
+                        .fill(dotColor(isDone: isDone, isCurrent: isCurrent))
                         .frame(width: 8, height: 8)
                     Text(step.title)
                         .font(.caption)
+                        .lineLimit(1)
                         .foregroundStyle(isCurrent ? .primary : .secondary)
                 }
+                // Each label keeps its natural width and the connectors absorb the
+                // slack. Without this the flexible connectors win the layout and the
+                // titles wrap mid-word ("Com-pati-bility").
+                .fixedSize(horizontal: true, vertical: false)
+
                 if step != OnboardingModel.Step.allCases.last {
                     Rectangle()
                         .fill(.separator)
                         .frame(height: 1)
-                        .frame(maxWidth: .infinity)
+                        .frame(minWidth: 6, maxWidth: .infinity)
                 }
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Setup step \(current.rawValue + 1) of \(OnboardingModel.Step.allCases.count): \(current.title)")
+    }
+
+    private func dotColor(isDone: Bool, isCurrent: Bool) -> Color {
+        if isDone { return .accentColor }
+        return isCurrent ? .accentColor.opacity(0.45) : .secondary.opacity(0.25)
     }
 }
