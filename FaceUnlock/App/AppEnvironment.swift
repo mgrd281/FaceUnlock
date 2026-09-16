@@ -50,6 +50,7 @@ public final class AppEnvironment {
     public var presentedError: FaceUnlockError?
 
     private var statusTask: Task<Void, Never>?
+    private var hasStarted = false
     private var compatibilityBuilder: SystemCompatibility?
     /// Mirrors of main-actor state that background `@Sendable` closures need.
     private let capabilityMirror = Atomic<SessionUnlockCapability>(.unsupported)
@@ -66,21 +67,23 @@ public final class AppEnvironment {
         lockMonitor: any LockStateMonitoring = LockStateMonitor(),
         sessionLocker: any SessionLocking = SessionLocker()
     ) {
-        let keychain = keychain ?? KeychainService()
-        let encryption = EncryptionService(keychain: keychain)
+        // Written long-hand rather than with `??`: the operands are different
+        // concrete types unified only by their protocol, which `??` cannot infer.
+        let resolvedKeychain: any KeychainServicing = keychain ?? KeychainService()
+        let encryption = EncryptionService(keychain: resolvedKeychain)
         let profileStore = BiometricProfileStore(encryption: encryption)
-        let credentials = CredentialStore(keychain: keychain)
-        let camera = camera ?? CameraManager()
+        let credentials = CredentialStore(keychain: resolvedKeychain)
+        let resolvedCamera: any CameraManaging = camera ?? CameraManager()
         let validator = SecurityValidator()
 
         self.preferences = preferences
-        self.keychain = keychain
+        self.keychain = resolvedKeychain
         self.permissions = permissions
         self.loginItems = loginItems
         self.localAuthentication = localAuthentication
         self.credentials = credentials
         self.profileStore = profileStore
-        self.camera = camera
+        self.camera = resolvedCamera
         self.lockMonitor = lockMonitor
         self.sessionLocker = sessionLocker
 
@@ -88,7 +91,13 @@ public final class AppEnvironment {
         self.qualityAnalyzer = FaceQualityAnalyzer()
         // A bundled or user-supplied Core ML model wins when one is present;
         // otherwise the Vision feature print plus geometry pipeline is used.
-        self.embedder = CoreMLFaceEmbeddingService() ?? VisionFaceEmbeddingService()
+        let embedder: any FaceEmbeddingProviding
+        if let coreML = CoreMLFaceEmbeddingService() {
+            embedder = coreML
+        } else {
+            embedder = VisionFaceEmbeddingService()
+        }
+        self.embedder = embedder
         self.matcher = FaceMatcher()
         self.livenessAnalyzer = LivenessAnalyzer()
 
@@ -110,7 +119,7 @@ public final class AppEnvironment {
         let unlockCoordinator = self.unlockCoordinator
         let preferencesBox = preferences
         self.recognitionCoordinator = RecognitionCoordinator(
-            camera: camera,
+            camera: resolvedCamera,
             detector: detector,
             quality: qualityAnalyzer,
             embedder: embedder,
@@ -143,14 +152,18 @@ public final class AppEnvironment {
         self.compatibilityBuilder = SystemCompatibility(
             permissions: permissions,
             loginItems: loginItems,
-            keychain: keychain,
+            keychain: resolvedKeychain,
             unlockCapabilityProvider: { [capabilityMirror] in capabilityMirror.value }
         )
     }
 
     // MARK: Lifecycle
 
+    /// Idempotent: calling it again attaches nothing new and does not start a
+    /// second monitoring task.
     public func start() async {
+        guard !hasStarted else { return }
+        hasStarted = true
         windows.attach(environment: self)
         await recognitionCoordinator.start()
         observeStatus()
@@ -159,6 +172,7 @@ public final class AppEnvironment {
     }
 
     public func shutdown() async {
+        hasStarted = false
         statusTask?.cancel()
         statusTask = nil
         await recognitionCoordinator.stop()
@@ -191,19 +205,19 @@ public final class AppEnvironment {
 
     public func setUnlockEnabled(_ enabled: Bool) {
         preferences.unlockEnabled = enabled
-        Task { await refreshEverything() }
+        Task { await self.refreshEverything() }
     }
 
     public func pause(for duration: TimeInterval?) {
         preferences.pause(until: duration.map { Date().addingTimeInterval($0) })
-        Task { await recognitionCoordinator.apply(.paused(until: preferences.pausedUntil)) }
+        Task { await self.recognitionCoordinator.apply(.paused(until: self.preferences.pausedUntil)) }
     }
 
     public func resume() {
         preferences.resume()
         Task {
-            await recognitionCoordinator.apply(.resumed)
-            await refreshEverything()
+            await self.recognitionCoordinator.apply(.resumed)
+            await self.refreshEverything()
         }
     }
 
@@ -229,14 +243,14 @@ public final class AppEnvironment {
         _ action: @escaping @MainActor () async -> Void
     ) {
         Task {
-            if preferences.protectSettings {
+            if self.preferences.protectSettings {
                 do {
-                    try await localAuthentication.authenticate(reason: reason)
+                    try await self.localAuthentication.authenticate(reason: reason)
                 } catch let error as FaceUnlockError {
-                    if error != .cancelled { presentedError = error }
+                    if error != .cancelled { self.presentedError = error }
                     return
                 } catch {
-                    presentedError = .localAuthenticationFailed(error.localizedDescription)
+                    self.presentedError = .localAuthenticationFailed(error.localizedDescription)
                     return
                 }
             }
@@ -277,7 +291,7 @@ public final class AppEnvironment {
 
     public func checkForUpdates() {
         Task {
-            lastUpdateCheck = await updateChecker.checkForUpdates()
+            self.lastUpdateCheck = await self.updateChecker.checkForUpdates()
         }
     }
 

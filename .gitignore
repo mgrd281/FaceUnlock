@@ -1,0 +1,22 @@
+# Xcode
+build/
+DerivedData/
+*.xcarchive
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Distribution artefacts
+*.dmg
+ExportOptions.plist
+
+# Optional, user-supplied Core ML model (never commit third-party weights)
+FaceUnlock/Resources/*.mlmodelc/
+FaceUnlock/Resources/*.mlmodel

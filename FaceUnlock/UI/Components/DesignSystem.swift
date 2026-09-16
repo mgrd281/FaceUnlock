@@ -53,12 +53,20 @@ public struct StatusRow: View {
     private let detail: String
     private let accessory: AnyView?
 
-    public init(
+    public init(symbolName: String, tint: Color, title: String, detail: String) {
+        self.symbolName = symbolName
+        self.tint = tint
+        self.title = title
+        self.detail = detail
+        self.accessory = nil
+    }
+
+    public init<Accessory: View>(
         symbolName: String,
         tint: Color,
         title: String,
         detail: String,
-        @ViewBuilder accessory: () -> some View = { EmptyView() }
+        @ViewBuilder accessory: () -> Accessory
     ) {
         self.symbolName = symbolName
         self.tint = tint

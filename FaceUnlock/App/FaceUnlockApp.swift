@@ -22,6 +22,10 @@ struct FaceUnlockApp: App {
             // reads out, so the menu bar itself is the status indicator.
             Image(systemName: StatusPresenter.symbolName(for: environment.status))
                 .accessibilityLabel(StatusPresenter.accessibilityDescription(for: environment.status))
+                // Belt and braces: `AppEnvironment.start()` is idempotent, so running
+                // it here as well as from the delegate guarantees the coordinator is
+                // running even if the delegate is attached late.
+                .task { await environment.start() }
         }
         .menuBarExtraStyle(.window)
 

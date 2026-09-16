@@ -4,17 +4,21 @@ import SwiftUI
 /// Application lifecycle.
 ///
 /// SwiftUI owns the menu-bar scene and Settings; this delegate exists for what it
-/// cannot express: the activation policy (menu-bar app versus Dock app), starting
-/// and stopping the coordinator around the app's own lifetime, and releasing the
-/// camera and the presence assertion on the way out.
+/// cannot express: the activation policy (menu-bar app versus Dock app), the
+/// first-run assistant, and an orderly shutdown that releases the camera and the
+/// presence assertion.
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     public var environment: AppEnvironment?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        guard let environment else { return }
-        NSApp.setActivationPolicy(environment.preferences.showInDock ? .regular : .accessory)
+        // Default to accessory: FaceUnlock is a menu-bar app unless the user has
+        // asked for a Dock icon.
+        NSApp.setActivationPolicy(
+            environment?.preferences.showInDock == true ? .regular : .accessory
+        )
 
+        guard let environment else { return }
         Task { @MainActor in
             await environment.start()
             if !environment.preferences.hasCompletedOnboarding {
@@ -23,17 +27,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    public func applicationWillTerminate(_ notification: Notification) {
-        guard let environment else { return }
-        // Bounded shutdown: the camera and the power assertion must be released,
-        // but quitting must not hang if something is stuck.
-        let semaphore = DispatchSemaphore(value: 0)
+    /// Shuts down asynchronously and then lets termination proceed.
+    ///
+    /// The camera session and the power assertion are torn down here rather than
+    /// in `applicationWillTerminate`, because that method runs on the main thread
+    /// and waiting there for main-actor work to finish would deadlock. AppKit's
+    /// `terminateLater` reply is the supported way to do asynchronous cleanup.
+    public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let environment else { return .terminateNow }
         Task { @MainActor in
             await environment.shutdown()
-            semaphore.signal()
+            AppLogger.lifecycle.notice("FaceUnlock shutdown complete")
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
-        _ = semaphore.wait(timeout: .now() + 2)
-        AppLogger.lifecycle.notice("FaceUnlock terminated")
+        return .terminateLater
     }
 
     /// Reopening from the Dock shows the assistant rather than nothing at all.

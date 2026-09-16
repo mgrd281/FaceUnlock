@@ -2,7 +2,7 @@ import XCTest
 @testable import FaceUnlock
 
 final class BiometricProfileStoreTests: XCTestCase {
-    private var directory: URL!
+    private var directory = FileManager.default.temporaryDirectory
 
     override func setUpWithError() throws {
         directory = FileManager.default.temporaryDirectory

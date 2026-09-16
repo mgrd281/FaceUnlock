@@ -97,7 +97,7 @@ public actor EnrollmentCoordinator {
         // A higher rate than unlock monitoring: the preview has to feel live and
         // the user is present and waiting, so the extra power cost is justified.
         let stream = try await camera.start(frameRate: 12)
-        defer { Task { await camera.stop() } }
+        defer { Task { await self.camera.stop() } }
 
         var embeddings: [FaceEmbedding] = []
         var poseTags: [EnrollmentPose] = []
@@ -250,7 +250,7 @@ public actor EnrollmentCoordinator {
 
         quality.reset()
         let stream = try await camera.start(frameRate: 10)
-        defer { Task { await camera.stop() } }
+        defer { Task { await self.camera.stop() } }
 
         var scores: [Double] = []
         let deadline = Date().addingTimeInterval(timeout)

@@ -110,10 +110,9 @@ public actor RecognitionCoordinator {
     public func start() async {
         await refreshPreconditions()
         guard monitoringTask == nil else { return }
-        monitoringTask = Task { [weak self] in
-            guard let self else { return }
-            for await event in await self.lockMonitor.events() {
-                await self.handle(event)
+        monitoringTask = Task { [weak self, lockMonitor] in
+            for await event in lockMonitor.events() {
+                await self?.handle(event)
             }
         }
         AppLogger.lifecycle.notice("Recognition coordinator started")
@@ -228,10 +227,26 @@ public actor RecognitionCoordinator {
         return result
     }
 
+    /// Per-attempt mutable state, kept in one place so the frame loop reads as a
+    /// sequence of decisions rather than a pile of bookkeeping variables.
+    private struct AttemptState {
+        var consecutiveMatches = 0
+        var framesProcessed = 0
+        var bestScore = 0.0
+        var lastLivenessScore = 0.0
+        var activeChallenge: LivenessChallenge?
+    }
+
+    /// What the frame loop should do next.
+    private enum FrameOutcome {
+        case keepLooking
+        case recognized
+        case rejected(AppStatus.RejectionReason)
+    }
+
     private func performAttempt(purpose: RecognitionPurpose) async -> RecognitionAttemptResult {
         let started = Date()
-        let configuration = await configurationProvider()
-        let settings = configuration.settings
+        let settings = await configurationProvider().settings
 
         guard let profile = cachedProfile else {
             return finish(
@@ -264,20 +279,12 @@ public actor RecognitionCoordinator {
             )
         }
 
+        let livenessConfiguration = Self.livenessConfiguration(for: profile, settings: settings)
         let required = profile.calibratedFor.requiredConsecutiveMatches
-        var livenessConfiguration = profile.livenessConfiguration
-        livenessConfiguration.mode = settings.livenessMode
-        livenessConfiguration.minimumScore = max(
-            livenessConfiguration.minimumScore, settings.sensitivity.livenessFloor
-        )
-
-        var consecutive = 0
-        var framesProcessed = 0
-        var bestScore = 0.0
-        var lastLiveness = 0.0
-        var activeChallenge: LivenessChallenge?
-        var verdict: RecognitionAttemptResult.Verdict = .rejected(.timedOut)
         let deadline = started.addingTimeInterval(settings.attemptTimeout)
+
+        var state = AttemptState()
+        var verdict: RecognitionAttemptResult.Verdict = .rejected(.timedOut)
 
         frameLoop: for await frame in stream {
             if Task.isCancelled {
@@ -289,100 +296,23 @@ public actor RecognitionCoordinator {
                 break frameLoop
             }
 
-            framesProcessed += 1
-            let preview = purpose == .test ? previewRenderer.render(frame) : nil
-            let faces: [DetectedFace]
-            do {
-                faces = try detector.detectFaces(in: frame)
-            } catch {
+            switch evaluate(
+                frame: frame,
+                purpose: purpose,
+                profile: profile,
+                livenessConfiguration: livenessConfiguration,
+                required: required,
+                state: &state
+            ) {
+            case .keepLooking:
                 continue
-            }
-
-            let evaluation = quality.evaluate(faces: faces, frame: frame)
-            guard case .acceptable = evaluation, let face = faces.first else {
-                consecutive = 0
-                publish(
-                    RecognitionProgress(
-                        status: machine.status,
-                        qualityIssues: evaluation.issues,
-                        activeChallenge: activeChallenge,
-                        consecutiveMatches: 0,
-                        requiredMatches: required,
-                        preview: preview
-                    )
-                )
-                continue
-            }
-
-            apply(.faceSeen)
-            liveness.record(livenessBuilder.makeSample(for: face, in: frame))
-
-            let embedding: FaceEmbedding
-            do {
-                embedding = try embedder.embedding(for: face, in: frame)
-            } catch {
-                consecutive = 0
-                continue
-            }
-
-            let match = matcher.match(embedding, against: profile)
-            bestScore = max(bestScore, match.score)
-            consecutive = match.isMatch ? consecutive + 1 : 0
-
-            let assessment = liveness.assess(configuration: livenessConfiguration)
-            lastLiveness = assessment.score
-
-            apply(.frameEvaluated(progress: Double(consecutive) / Double(required)))
-            publish(
-                RecognitionProgress(
-                    status: machine.status,
-                    matchScore: match.score,
-                    threshold: match.threshold,
-                    livenessScore: assessment.score,
-                    activeChallenge: activeChallenge,
-                    consecutiveMatches: consecutive,
-                    requiredMatches: required,
-                    preview: preview
-                )
-            )
-
-            guard consecutive >= required else { continue }
-
-            if let disqualifier = assessment.disqualifier {
-                verdict = .rejected(.livenessFailed)
-                AppLogger.liveness.error("Attempt rejected: \(disqualifier, privacy: .public)")
+            case .recognized:
+                verdict = .recognized
+                break frameLoop
+            case let .rejected(reason):
+                verdict = .rejected(reason)
                 break frameLoop
             }
-
-            if let challenge = activeChallenge {
-                guard liveness.challengeSatisfied(challenge) else { continue }
-                activeChallenge = nil
-            } else if let suggested = assessment.suggestedChallenge {
-                activeChallenge = suggested
-                publish(
-                    RecognitionProgress(
-                        status: machine.status,
-                        matchScore: match.score,
-                        threshold: match.threshold,
-                        livenessScore: assessment.score,
-                        activeChallenge: suggested,
-                        consecutiveMatches: consecutive,
-                        requiredMatches: required,
-                        preview: preview
-                    )
-                )
-                continue
-            }
-
-            guard assessment.score >= livenessConfiguration.minimumScore else {
-                // Keep looking: more frames may raise the score. The deadline is the
-                // only thing that ends the attempt, so a marginal score never
-                // becomes an accept on its own.
-                continue
-            }
-
-            verdict = .recognized
-            break frameLoop
         }
 
         // The camera is released before anything else happens, including the
@@ -393,10 +323,8 @@ public actor RecognitionCoordinator {
         if case .recognized = verdict {
             apply(.matchConfirmed)
             if purpose == .unlock {
-                apply(.unlockStarted)
                 do {
-                    outcome = try await unlockCoordinator.unlock()
-                    apply(.unlockSucceeded)
+                    outcome = try await performUnlock()
                 } catch {
                     let failure = (error as? FaceUnlockError) ?? .unlockUnavailableOnThisSystem
                     verdict = .failed(failure)
@@ -409,16 +337,133 @@ public actor RecognitionCoordinator {
             apply(.failed(error))
         }
 
-        let result = RecognitionAttemptResult(
-            verdict: verdict,
-            bestScore: bestScore,
-            threshold: profile.recognitionThreshold,
-            livenessScore: lastLiveness,
-            framesProcessed: framesProcessed,
-            duration: Date().timeIntervalSince(started),
-            unlockOutcome: outcome
+        return finish(
+            result: RecognitionAttemptResult(
+                verdict: verdict,
+                bestScore: state.bestScore,
+                threshold: profile.recognitionThreshold,
+                livenessScore: state.lastLivenessScore,
+                framesProcessed: state.framesProcessed,
+                duration: Date().timeIntervalSince(started),
+                unlockOutcome: outcome
+            ),
+            purpose: purpose
         )
-        return finish(result: result, purpose: purpose)
+    }
+
+    /// Runs the whole per-frame pipeline and decides what the loop does next.
+    private func evaluate(
+        frame: CameraFrame,
+        purpose: RecognitionPurpose,
+        profile: BiometricProfile,
+        livenessConfiguration: BiometricProfile.LivenessConfiguration,
+        required: Int,
+        state: inout AttemptState
+    ) -> FrameOutcome {
+        state.framesProcessed += 1
+        // A frame is only ever rendered for the recognition test window; an unlock
+        // attempt never produces an image anywhere.
+        let preview = purpose == .test ? previewRenderer.render(frame) : nil
+
+        guard let faces = try? detector.detectFaces(in: frame) else { return .keepLooking }
+        let evaluation = quality.evaluate(faces: faces, frame: frame)
+        guard case .acceptable = evaluation, let face = faces.first else {
+            state.consecutiveMatches = 0
+            publish(
+                RecognitionProgress(
+                    status: machine.status,
+                    qualityIssues: evaluation.issues,
+                    activeChallenge: state.activeChallenge,
+                    consecutiveMatches: 0,
+                    requiredMatches: required,
+                    preview: preview
+                )
+            )
+            return .keepLooking
+        }
+
+        apply(.faceSeen)
+        liveness.record(livenessBuilder.makeSample(for: face, in: frame))
+
+        guard let embedding = try? embedder.embedding(for: face, in: frame) else {
+            state.consecutiveMatches = 0
+            return .keepLooking
+        }
+
+        let match = matcher.match(embedding, against: profile)
+        state.bestScore = max(state.bestScore, match.score)
+        state.consecutiveMatches = match.isMatch ? state.consecutiveMatches + 1 : 0
+
+        let assessment = liveness.assess(configuration: livenessConfiguration)
+        state.lastLivenessScore = assessment.score
+
+        apply(.frameEvaluated(progress: Double(state.consecutiveMatches) / Double(required)))
+        publish(
+            RecognitionProgress(
+                status: machine.status,
+                matchScore: match.score,
+                threshold: match.threshold,
+                livenessScore: assessment.score,
+                activeChallenge: state.activeChallenge,
+                consecutiveMatches: state.consecutiveMatches,
+                requiredMatches: required,
+                preview: preview
+            )
+        )
+
+        guard state.consecutiveMatches >= required else { return .keepLooking }
+
+        if let disqualifier = assessment.disqualifier {
+            AppLogger.liveness.error("Attempt rejected: \(disqualifier, privacy: .public)")
+            return .rejected(.livenessFailed)
+        }
+
+        if let challenge = state.activeChallenge {
+            guard liveness.challengeSatisfied(challenge) else { return .keepLooking }
+            state.activeChallenge = nil
+        } else if let suggested = assessment.suggestedChallenge {
+            state.activeChallenge = suggested
+            publish(
+                RecognitionProgress(
+                    status: machine.status,
+                    matchScore: match.score,
+                    threshold: match.threshold,
+                    livenessScore: assessment.score,
+                    activeChallenge: suggested,
+                    consecutiveMatches: state.consecutiveMatches,
+                    requiredMatches: required,
+                    preview: preview
+                )
+            )
+            return .keepLooking
+        }
+
+        // A marginal liveness score keeps the attempt going rather than ending it:
+        // more frames may raise the score, and only the deadline ends an attempt,
+        // so a marginal score can never become an accept on its own.
+        guard assessment.score >= livenessConfiguration.minimumScore else { return .keepLooking }
+
+        return .recognized
+    }
+
+    /// Runs the unlock chain for a confirmed recognition.
+    private func performUnlock() async throws -> UnlockOutcome {
+        apply(.unlockStarted)
+        let outcome = try await unlockCoordinator.unlock()
+        apply(.unlockSucceeded)
+        return outcome
+    }
+
+    /// The profile's stored liveness configuration, tightened by the current
+    /// settings. Settings may only ever raise the bar, never lower it.
+    private static func livenessConfiguration(
+        for profile: BiometricProfile,
+        settings: RecognitionSettings
+    ) -> BiometricProfile.LivenessConfiguration {
+        var configuration = profile.livenessConfiguration
+        configuration.mode = settings.livenessMode
+        configuration.minimumScore = max(configuration.minimumScore, settings.sensitivity.livenessFloor)
+        return configuration
     }
 
     private func finish(result: RecognitionAttemptResult, purpose: RecognitionPurpose) -> RecognitionAttemptResult {

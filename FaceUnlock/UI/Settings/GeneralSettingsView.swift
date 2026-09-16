@@ -4,8 +4,6 @@ struct GeneralSettingsView: View {
     @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
-        @Bindable var environment = environment
-
         SettingsPane {
             Card {
                 VStack(alignment: .leading, spacing: Design.Spacing.medium) {

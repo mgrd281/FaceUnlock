@@ -1,3 +1,4 @@
+import Security
 import XCTest
 @testable import FaceUnlock
 
@@ -38,7 +39,11 @@ final class KeychainServiceTests: XCTestCase {
     /// Every stored item must be device-local and non-syncing.
     func testAllItemsUseDeviceOnlyAccessibility() {
         for item in KeychainItem.allCases {
-            XCTAssertEqual(item.accessibility, kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+            // Compared as `String`: `CFString` has no usable `Equatable` conformance.
+            XCTAssertEqual(
+                item.accessibility as String,
+                kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String
+            )
             XCTAssertFalse(item.label.isEmpty)
         }
     }

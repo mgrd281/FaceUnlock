@@ -53,19 +53,23 @@ public struct DiagnosticsView: View {
                 Card {
                     VStack(alignment: .leading, spacing: Design.Spacing.small) {
                         Text("Recognition").font(.headline)
-                        DiagnosticsRow("Engine", snapshot.recognitionEngine)
-                        DiagnosticsRow("Descriptor dimension", "\(snapshot.descriptorDimension)")
-                        DiagnosticsRow("Enrolled samples", "\(snapshot.profileSampleCount)")
-                        DiagnosticsRow("Threshold", String(format: "%.4f", snapshot.recognitionThreshold))
-                        DiagnosticsRow("Sensitivity", snapshot.sensitivityPreset)
-                        DiagnosticsRow("Liveness mode", snapshot.livenessMode)
-                        DiagnosticsRow("Last result", snapshot.lastRecognitionResult ?? "—")
-                        DiagnosticsRow("Last error", snapshot.lastError ?? "—")
-                        DiagnosticsRow(
-                            "Average latency",
-                            snapshot.averageRecognitionLatency.map { String(format: "%.2f s", $0) } ?? "—"
-                        )
-                        DiagnosticsRow("Attempts", snapshot.attemptSummary)
+                        Group {
+                            DiagnosticsRow("Engine", snapshot.recognitionEngine)
+                            DiagnosticsRow("Descriptor dimension", "\(snapshot.descriptorDimension)")
+                            DiagnosticsRow("Enrolled samples", "\(snapshot.profileSampleCount)")
+                            DiagnosticsRow("Threshold", String(format: "%.4f", snapshot.recognitionThreshold))
+                            DiagnosticsRow("Sensitivity", snapshot.sensitivityPreset)
+                            DiagnosticsRow("Liveness mode", snapshot.livenessMode)
+                        }
+                        Group {
+                            DiagnosticsRow("Last result", snapshot.lastRecognitionResult ?? "—")
+                            DiagnosticsRow("Last error", snapshot.lastError ?? "—")
+                            DiagnosticsRow(
+                                "Average latency",
+                                snapshot.averageRecognitionLatency.map { String(format: "%.2f s", $0) } ?? "—"
+                            )
+                            DiagnosticsRow("Attempts", snapshot.attemptSummary)
+                        }
                     }
                 }
 

@@ -112,11 +112,11 @@ public final class OnboardingModel {
 
     public func requestCameraAccess() {
         Task {
-            let state = await environment.permissions.requestCameraAccess()
+            let state = await self.environment.permissions.requestCameraAccess()
             if state != .granted {
-                error = .cameraPermissionDenied
+                self.error = .cameraPermissionDenied
             }
-            await environment.refreshEverything()
+            await self.environment.refreshEverything()
         }
     }
 
@@ -202,6 +202,6 @@ public final class OnboardingModel {
     public func finish() {
         environment.preferences.hasCompletedOnboarding = true
         cancelWork()
-        Task { await environment.refreshEverything() }
+        Task { await self.environment.refreshEverything() }
     }
 }
