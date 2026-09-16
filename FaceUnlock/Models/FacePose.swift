@@ -56,6 +56,18 @@ public enum EnrollmentPose: String, CaseIterable, Codable, Sendable, Identifiabl
         }
     }
 
+    /// Short label for compact chips.
+    public var shortTitle: String {
+        switch self {
+        case .straight: return "Straight"
+        case .left: return "Left"
+        case .right: return "Right"
+        case .up: return "Up"
+        case .down: return "Down"
+        case .neutralExpression: return "Neutral"
+        }
+    }
+
     public var symbolName: String {
         switch self {
         case .straight: return "person.crop.square"

@@ -2,14 +2,12 @@ import SwiftUI
 
 struct WelcomeStepView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.large) {
-            Label("FaceUnlock", systemImage: "faceid")
-                .font(.largeTitle.weight(.semibold))
-                .labelStyle(.titleAndIcon)
-
-            Text("FaceUnlock uses your Mac's camera to recognise you locally.\nYour face data stays on this Mac.")
-                .font(.title3)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: Design.Spacing.section) {
+            StepHeader(
+                symbolName: "faceid",
+                title: "FaceUnlock",
+                subtitle: "FaceUnlock uses your Mac's camera to recognise you locally. Your face data stays on this Mac."
+            )
 
             Card {
                 VStack(alignment: .leading, spacing: Design.Spacing.medium) {
@@ -33,10 +31,13 @@ struct WelcomeStepView: View {
                     )
                 }
             }
+            .frame(maxWidth: 640)
 
             Text("The next steps check what this Mac supports, ask for the permissions FaceUnlock needs, and record your face.")
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
         }
     }
 }
@@ -45,10 +46,12 @@ struct CompatibilityStepView: View {
     let report: SystemCompatibilityReport?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-            Text("FaceUnlock Compatibility").font(.title2.weight(.semibold))
-            Text("Everything below is measured on this Mac right now. Nothing is assumed.")
-                .foregroundStyle(.secondary)
+        VStack(spacing: Design.Spacing.section) {
+            StepHeader(
+                symbolName: "checkmark.seal",
+                title: "Compatibility",
+                subtitle: "Everything below is measured on this Mac right now. Nothing is assumed."
+            )
 
             if let report {
                 Card {
@@ -61,15 +64,22 @@ struct CompatibilityStepView: View {
                                 detail: check.detail
                             ) {
                                 Text(check.level.label)
-                                    .font(.caption.weight(.medium))
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(check.level.tint)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(check.level.tint.opacity(0.12), in: Capsule())
                             }
                         }
                     }
                 }
+                .frame(maxWidth: 640)
+
                 if !report.canProceed {
                     Text("FaceUnlock cannot be set up on this Mac until the unsupported items above are resolved.")
+                        .font(.callout)
                         .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
                 }
             } else {
                 ProgressView("Checking this Mac…")
@@ -83,11 +93,12 @@ struct CameraPermissionStepView: View {
     let onRequest: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-            Text("Camera access").font(.title2.weight(.semibold))
-            Text("FaceUnlock needs the camera to see your face. macOS asks you for permission — FaceUnlock cannot grant it for you.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: Design.Spacing.section) {
+            StepHeader(
+                symbolName: "camera",
+                title: "Camera access",
+                subtitle: "FaceUnlock needs the camera to see your face. macOS asks you for permission — FaceUnlock cannot grant it for you."
+            )
 
             Card {
                 StatusRow(
@@ -97,19 +108,32 @@ struct CameraPermissionStepView: View {
                     detail: state.detail
                 )
             }
+            .frame(maxWidth: 560)
 
-            HStack {
-                if state == .notDetermined {
-                    Button("Allow Camera Access", action: onRequest)
-                        .keyboardShortcut(.defaultAction)
-                } else if state != .granted {
+            if state == .notDetermined {
+                Button {
+                    onRequest()
+                } label: {
+                    Label("Allow Camera Access", systemImage: "camera.fill")
+                        .frame(minWidth: 180)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.defaultAction)
+            } else if state != .granted {
+                VStack(spacing: Design.Spacing.small) {
                     Button("Open Camera Settings") {
                         SystemSettingsLinks.open(SystemSettingsLinks.camera)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     Text(SystemSettingsLinks.cameraPath)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            } else {
+                Label("Granted — you can continue.", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
             }
         }
     }
@@ -120,10 +144,12 @@ struct AccessibilityStepView: View {
     let onPrompt: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-            Text("Accessibility access").font(.title2.weight(.semibold))
-            Text("FaceUnlock requires Accessibility permission only for the user-approved lock-screen interaction required by the unlock workflow.")
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: Design.Spacing.section) {
+            StepHeader(
+                symbolName: "accessibility",
+                title: "Accessibility access",
+                subtitle: "FaceUnlock requires Accessibility permission only for the user-approved lock-screen interaction required by the unlock workflow."
+            )
 
             Card {
                 VStack(alignment: .leading, spacing: Design.Spacing.medium) {
@@ -141,16 +167,19 @@ struct AccessibilityStepView: View {
                     )
                 }
             }
+            .frame(maxWidth: 640)
 
-            HStack {
+            HStack(spacing: Design.Spacing.medium) {
                 Button("Open Accessibility Settings") {
                     SystemSettingsLinks.open(SystemSettingsLinks.accessibility)
                 }
                 Button("Ask macOS now", action: onPrompt)
-                Text(SystemSettingsLinks.accessibilityPath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+            .controlSize(.large)
+
+            Text(SystemSettingsLinks.accessibilityPath)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -159,10 +188,13 @@ struct FinishedStepView: View {
     let environment: AppEnvironment
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.large) {
-            Label("FaceUnlock is set up", systemImage: "checkmark.seal")
-                .font(.title.weight(.semibold))
-                .foregroundStyle(.green)
+        VStack(spacing: Design.Spacing.section) {
+            StepHeader(
+                symbolName: "checkmark.seal.fill",
+                title: "FaceUnlock is set up",
+                subtitle: "You can change any of this later in Settings.",
+                tint: .green
+            )
 
             Card {
                 VStack(alignment: .leading, spacing: Design.Spacing.medium) {
@@ -188,16 +220,14 @@ struct FinishedStepView: View {
                     )
                 }
             }
-
-            Text("You can change any of this later in Settings.")
-                .foregroundStyle(.secondary)
+            .frame(maxWidth: 640)
         }
     }
 
     private var unlockDetail: String {
         switch environment.unlockCapability {
         case .supported:
-            return "FaceUnlock can keep this Mac from locking while it recognises you."
+            return "When this Mac starts to go idle, FaceUnlock checks whether you are there and keeps it awake if you are."
         case .limited:
             return "FaceUnlock recognises you at the lock screen and tells you, but macOS requires you to finish the unlock with Touch ID or your password."
         case .unsupported:

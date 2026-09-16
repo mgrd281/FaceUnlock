@@ -17,7 +17,12 @@ struct PasswordStepView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-            Text("Saved password").font(.title2.weight(.semibold))
+            StepHeader(
+                symbolName: "key.fill",
+                title: "Saved password",
+                subtitle: "Optional, and on current macOS versions not usable — the honest recommendation is to skip this step."
+            )
+            .padding(.bottom, Design.Spacing.small)
 
             Card {
                 VStack(alignment: .leading, spacing: Design.Spacing.medium) {

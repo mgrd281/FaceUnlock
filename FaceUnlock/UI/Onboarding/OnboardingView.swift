@@ -29,28 +29,33 @@ public struct OnboardingView: View {
 
     private func content(_ model: OnboardingModel) -> some View {
         VStack(spacing: 0) {
-            StepIndicator(current: model.step)
-                .padding(.horizontal, Design.Spacing.large)
-                .padding(.vertical, Design.Spacing.medium)
-
-            Divider()
+            StepProgressBar(current: model.step)
+                .padding(.horizontal, Design.Spacing.section)
+                .padding(.top, Design.Spacing.medium)
+                .padding(.bottom, Design.Spacing.small)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: Design.Spacing.large) {
+                VStack(spacing: Design.Spacing.large) {
                     if let error = model.error {
                         ErrorBanner(error: error) { model.error = nil }
+                            .frame(maxWidth: 640)
                     }
                     stepContent(model)
+                        .transition(.opacity)
                 }
-                .padding(Design.Spacing.large)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Design.Spacing.section)
+                .padding(.vertical, Design.Spacing.large)
+                .frame(maxWidth: .infinity)
             }
+            .animation(.easeInOut(duration: 0.2), value: model.step)
 
             Divider()
 
             footer(model)
-                .padding(Design.Spacing.medium)
+                .padding(.horizontal, Design.Spacing.section)
+                .padding(.vertical, Design.Spacing.medium)
         }
+        .background(.background)
     }
 
     @ViewBuilder
@@ -91,53 +96,24 @@ public struct OnboardingView: View {
                     model.finish()
                     dismiss()
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             } else {
                 Button(model.step == .password ? "Skip" : "Continue") { model.advance() }
-                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    // On the camera steps the in-content Start button owns Return.
+                    .keyboardShortcut(model.isCameraStep ? nil : .defaultAction)
                     .disabled(!model.canAdvance || model.isWorking)
             }
         }
+        .controlSize(.large)
     }
 }
 
-/// The horizontal step indicator at the top of the assistant.
-struct StepIndicator: View {
-    let current: OnboardingModel.Step
-
-    var body: some View {
-        HStack(spacing: Design.Spacing.small) {
-            ForEach(OnboardingModel.Step.allCases) { step in
-                let isDone = step.rawValue < current.rawValue
-                let isCurrent = step == current
-                HStack(spacing: Design.Spacing.tight) {
-                    Circle()
-                        .fill(dotColor(isDone: isDone, isCurrent: isCurrent))
-                        .frame(width: 8, height: 8)
-                    Text(step.title)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .foregroundStyle(isCurrent ? .primary : .secondary)
-                }
-                // Each label keeps its natural width and the connectors absorb the
-                // slack. Without this the flexible connectors win the layout and the
-                // titles wrap mid-word ("Com-pati-bility").
-                .fixedSize(horizontal: true, vertical: false)
-
-                if step != OnboardingModel.Step.allCases.last {
-                    Rectangle()
-                        .fill(.separator)
-                        .frame(height: 1)
-                        .frame(minWidth: 6, maxWidth: .infinity)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Setup step \(current.rawValue + 1) of \(OnboardingModel.Step.allCases.count): \(current.title)")
-    }
-
-    private func dotColor(isDone: Bool, isCurrent: Bool) -> Color {
-        if isDone { return .accentColor }
-        return isCurrent ? .accentColor.opacity(0.45) : .secondary.opacity(0.25)
+extension OnboardingModel {
+    /// Steps whose primary button is inside the content, so Continue must not
+    /// steal the Return key from it.
+    var isCameraStep: Bool {
+        step == .enrollment || step == .calibration
     }
 }

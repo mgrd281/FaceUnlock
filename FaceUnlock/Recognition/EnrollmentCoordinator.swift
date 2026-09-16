@@ -9,6 +9,8 @@ public struct EnrollmentUpdate: @unchecked Sendable {
     public var guidance: String
     public var preview: PreviewImage?
     public var isComplete: Bool
+    /// True when a single, acceptable-quality face was in frame for this update.
+    public var faceInPosition: Bool = false
 
     public var totalCaptured: Int { capturedByStep.values.reduce(0, +) }
     public var totalRequired: Int {
@@ -139,7 +141,8 @@ public actor EnrollmentCoordinator {
                         issues: [],
                         guidance: Self.guidance(for: step, measured: measured.pose),
                         preview: preview,
-                        isComplete: false
+                        isComplete: false,
+                        faceInPosition: true
                     )
                 )
                 continue
@@ -173,7 +176,8 @@ public actor EnrollmentCoordinator {
                         issues: [],
                         guidance: "Hold that position — moving very slightly helps.",
                         preview: preview,
-                        isComplete: false
+                        isComplete: false,
+                        faceInPosition: true
                     )
                 )
                 continue
@@ -198,7 +202,8 @@ public actor EnrollmentCoordinator {
                     issues: [],
                     guidance: stepIndex < steps.count ? nextStep.instruction : "All set.",
                     preview: preview,
-                    isComplete: stepIndex >= steps.count
+                    isComplete: stepIndex >= steps.count,
+                    faceInPosition: true
                 )
             )
             if stepIndex >= steps.count { break }

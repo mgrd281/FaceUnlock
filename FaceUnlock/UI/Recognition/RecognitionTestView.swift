@@ -14,102 +14,132 @@ public struct RecognitionTestView: View {
     public init() {}
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.large) {
-            Text("Test face recognition").font(.title2.weight(.semibold))
-            Text("Nothing is unlocked by this test. It runs exactly the same pipeline a real attempt uses and reports what it found.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(alignment: .top, spacing: Design.Spacing.large) {
-                LabelledCameraPreview(
-                    image: environment.progress.preview?.image,
-                    placeholder: isRunning ? "Starting the camera…" : "The camera is off"
+        ScrollView {
+            VStack(spacing: Design.Spacing.large) {
+                StepHeader(
+                    symbolName: "viewfinder",
+                    title: "Test face recognition",
+                    subtitle: "Nothing is unlocked by this test. It runs exactly the same pipeline a real attempt uses and reports what it found."
                 )
-                .frame(width: 320)
 
-                VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-                    StatusRow(
-                        symbolName: StatusPresenter.symbolName(for: environment.status),
-                        tint: StatusPresenter.tint(for: environment.status),
-                        title: StatusPresenter.headline(for: environment.status),
-                        detail: matchesDescription
-                    )
+                FaceScannerView(
+                    image: environment.progress.preview?.image,
+                    progress: matchProgress,
+                    cue: cue,
+                    status: scannerStatus
+                )
 
-                    ConfidenceMeter(
-                        value: environment.progress.matchScore,
-                        threshold: environment.progress.threshold
-                    )
-
-                    if let liveness = environment.progress.livenessScore {
-                        LabeledContent("Liveness") {
-                            Text(String(format: "%.2f", liveness))
-                                .monospacedDigit()
-                        }
-                    }
-
-                    if let challenge = environment.progress.activeChallenge {
-                        Label(challenge.prompt, systemImage: challenge.symbolName)
-                            .font(.title3.weight(.medium))
-                            .foregroundStyle(.tint)
-                            .accessibilityLiveRegion()
-                    }
-
-                    if !environment.progress.qualityIssues.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(environment.progress.qualityIssues, id: \.self) { issue in
-                                Label(issue.message, systemImage: "exclamationmark.circle")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-
-                    if let result {
-                        Card { resultSummary(result) }
-                    }
-
-                    HStack {
-                        if isRunning {
-                            Button("Stop") { stop() }
-                        } else {
-                            Button("Run test") { run() }
-                                .keyboardShortcut(.defaultAction)
-                                .disabled(environment.profileSummary == nil)
-                        }
-                    }
-
-                    if environment.profileSummary == nil {
-                        Text("Set up your face first — there is nothing to compare against yet.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(spacing: 4) {
+                    Text(headline)
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.center)
+                .frame(minHeight: 48)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.updatesFrequently)
+
+                metrics
+                    .frame(maxWidth: 420)
+
+                if let result {
+                    Card { resultSummary(result) }
+                        .frame(maxWidth: 420)
+                }
+
+                controls
             }
+            .padding(Design.Spacing.section)
+            .frame(maxWidth: .infinity)
         }
-        .padding(Design.Spacing.large)
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 720, minHeight: 700)
         .onDisappear { stop() }
     }
 
-    private var matchesDescription: String {
+    // MARK: - Derived presentation
+
+    private var matchProgress: Double {
         let progress = environment.progress
-        guard progress.requiredMatches > 0 else { return "Idle" }
-        return "\(progress.consecutiveMatches) of \(progress.requiredMatches) consecutive matching frames"
+        guard progress.requiredMatches > 0 else { return 0 }
+        return Double(progress.consecutiveMatches) / Double(progress.requiredMatches)
+    }
+
+    private var cue: FaceScannerView.Cue? {
+        guard isRunning, let challenge = environment.progress.activeChallenge else {
+            return isRunning ? .center : nil
+        }
+        switch challenge {
+        case .turnLeft: return .left
+        case .turnRight: return .right
+        case .blink: return .center
+        }
+    }
+
+    private var scannerStatus: FaceScannerView.Status {
+        guard isRunning || result != nil else { return .idle }
+        if let result {
+            return result.succeeded ? .success : .failure
+        }
+        switch environment.status {
+        case .recognized, .unlocked: return .success
+        case .rejected, .error: return .failure
+        case .faceDetected, .recognizing: return environment.progress.qualityIssues.isEmpty ? .aligned : .attention
+        default: return .searching
+        }
+    }
+
+    private var headline: String {
+        if let challenge = environment.progress.activeChallenge, isRunning {
+            return challenge.prompt
+        }
+        if let result {
+            switch result.verdict {
+            case .recognized: return "Recognised"
+            case let .rejected(reason): return StatusPresenter.headline(for: .rejected(reason))
+            case let .failed(error): return error.message
+            }
+        }
+        if isRunning { return StatusPresenter.headline(for: environment.status) }
+        return environment.profileSummary == nil ? "Set up your face first" : "Ready to test"
+    }
+
+    private var detail: String {
+        if isRunning, let issue = environment.progress.qualityIssues.first {
+            return issue.message
+        }
+        let progress = environment.progress
+        if isRunning, progress.requiredMatches > 0 {
+            return "\(progress.consecutiveMatches) of \(progress.requiredMatches) consecutive matching frames"
+        }
+        if result != nil { return "Run again to try different lighting or angles." }
+        return environment.profileSummary == nil
+            ? "There is nothing to compare against yet."
+            : "Look at the camera as you normally would."
+    }
+
+    private var metrics: some View {
+        VStack(spacing: Design.Spacing.small) {
+            ConfidenceMeter(
+                value: environment.progress.matchScore,
+                threshold: environment.progress.threshold
+            )
+            if let liveness = environment.progress.livenessScore {
+                HStack {
+                    Text("Liveness").font(.caption.weight(.medium))
+                    Spacer()
+                    Text(String(format: "%.2f", liveness))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 
     @ViewBuilder
     private func resultSummary(_ result: RecognitionAttemptResult) -> some View {
         VStack(alignment: .leading, spacing: Design.Spacing.small) {
-            switch result.verdict {
-            case .recognized:
-                Label("Recognised", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-            case let .rejected(reason):
-                Label(StatusPresenter.headline(for: .rejected(reason)), systemImage: "xmark.circle")
-                    .foregroundStyle(.orange)
-            case let .failed(error):
-                Label(error.message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-            }
             DiagnosticsRow("Best score", String(format: "%.4f", result.bestScore))
             DiagnosticsRow("Threshold", String(format: "%.4f", result.threshold))
             DiagnosticsRow("Liveness", String(format: "%.2f", result.livenessScore))
@@ -117,6 +147,27 @@ public struct RecognitionTestView: View {
             DiagnosticsRow("Duration", String(format: "%.2f s", result.duration))
         }
     }
+
+    @ViewBuilder
+    private var controls: some View {
+        if isRunning {
+            Button("Stop") { stop() }
+                .controlSize(.large)
+        } else {
+            Button {
+                run()
+            } label: {
+                Label(result == nil ? "Run test" : "Run again", systemImage: "play.fill")
+                    .frame(minWidth: 140)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .disabled(environment.profileSummary == nil)
+        }
+    }
+
+    // MARK: - Actions
 
     private func run() {
         guard !isRunning else { return }

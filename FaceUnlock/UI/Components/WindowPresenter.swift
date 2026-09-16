@@ -29,8 +29,8 @@ public final class WindowPresenter {
 
         var contentSize: NSSize {
             switch self {
-            case .onboarding: return NSSize(width: 820, height: 600)
-            case .recognitionTest: return NSSize(width: 760, height: 520)
+            case .onboarding: return NSSize(width: 820, height: 720)
+            case .recognitionTest: return NSSize(width: 720, height: 700)
             case .diagnostics: return NSSize(width: 640, height: 560)
             case .password: return NSSize(width: 580, height: 560)
             case .about: return NSSize(width: 560, height: 520)

@@ -1,115 +1,188 @@
 import SwiftUI
 
+/// Guided face capture, presented as a Face ID–style scanner.
 struct EnrollmentStepView: View {
     @Bindable var model: OnboardingModel
 
+    private var update: EnrollmentUpdate? { model.enrollmentUpdate }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-            Text("Record your face").font(.title2.weight(.semibold))
-            Text("FaceUnlock captures a handful of samples from several angles so it can still recognise you when you are not perfectly square to the camera. No photographs are saved — each sample becomes a mathematical descriptor and the frame is discarded.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: Design.Spacing.large) {
+            StepHeader(
+                symbolName: "faceid",
+                title: "Set up your face",
+                subtitle: "Move your head slowly as the ring fills. Nothing is photographed — each sample becomes a mathematical descriptor and the frame is discarded."
+            )
 
-            HStack(alignment: .top, spacing: Design.Spacing.large) {
-                VStack(spacing: Design.Spacing.small) {
-                    LabelledCameraPreview(image: model.previewImage)
-                        .frame(width: 320)
-                    if let update = model.enrollmentUpdate {
-                        Text(update.guidance)
-                            .font(.callout.weight(.medium))
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 320)
-                            .accessibilityLiveRegion()
-                    }
-                }
+            FaceScannerView(
+                image: model.previewImage,
+                progress: update?.progress ?? 0,
+                cue: cue,
+                status: scannerStatus
+            )
 
-                VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-                    ForEach(EnrollmentPose.allCases) { pose in
-                        let captured = model.enrollmentUpdate?.capturedByStep[pose] ?? 0
-                        let isCurrent = model.enrollmentUpdate?.currentStep == pose
-                        StatusRow(
-                            symbolName: captured >= pose.requiredSamples
-                                ? "checkmark.circle.fill"
-                                : pose.symbolName,
-                            tint: captured >= pose.requiredSamples ? .green : (isCurrent ? .accentColor : .secondary),
-                            title: pose.title,
-                            detail: "\(min(captured, pose.requiredSamples)) of \(pose.requiredSamples) captured"
-                        )
-                    }
-
-                    if let update = model.enrollmentUpdate {
-                        ProgressView(value: update.progress)
-                            .accessibilityLabel("Enrolment progress")
-                            .accessibilityValue("\(Int(update.progress * 100)) percent")
-                    }
-
-                    if model.isWorking {
-                        Button("Stop") { model.cancelWork() }
-                    } else {
-                        Button("Start capturing") { model.startEnrollment() }
-                            .keyboardShortcut(.defaultAction)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 4) {
+                Text(instruction)
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
+            .multilineTextAlignment(.center)
+            .frame(minHeight: 48)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.updatesFrequently)
+
+            PoseChips(capturedByStep: update?.capturedByStep ?? [:], current: update?.currentStep)
+
+            controls
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Derived presentation
+
+    private var instruction: String {
+        guard model.isWorking || update != nil else { return "Ready when you are" }
+        guard let update else { return "Starting the camera…" }
+        if update.isComplete { return "All samples captured" }
+        return update.currentStep.title
+    }
+
+    private var detail: String {
+        guard model.isWorking || update != nil else {
+            return "Sit facing the camera in even light, then start."
+        }
+        guard let update else { return "" }
+        if update.isComplete { return "Continue to calibrate recognition." }
+        if let issue = update.issues.first { return issue.message }
+        return update.guidance
+    }
+
+    private var cue: FaceScannerView.Cue? {
+        guard let update, !update.isComplete, model.isWorking else { return nil }
+        switch update.currentStep {
+        case .left: return .left
+        case .right: return .right
+        case .up: return .up
+        case .down: return .down
+        case .straight, .neutralExpression: return .center
+        }
+    }
+
+    private var scannerStatus: FaceScannerView.Status {
+        guard let update else { return model.isWorking ? .searching : .idle }
+        if update.isComplete { return .success }
+        if !update.issues.isEmpty { return .attention }
+        return update.faceInPosition ? .aligned : .searching
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        if model.isWorking {
+            Button("Stop") { model.cancelWork() }
+                .controlSize(.large)
+        } else if update?.isComplete == true {
+            Text("Press Continue to calibrate.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        } else {
+            Button {
+                model.startEnrollment()
+            } label: {
+                Label(update == nil ? "Start" : "Start again", systemImage: "camera.fill")
+                    .frame(minWidth: 140)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
         }
     }
 }
 
+/// Calibration, on the same scanner: the ring fills as genuine samples arrive.
 struct CalibrationStepView: View {
     @Bindable var model: OnboardingModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-            Text("Calibration").font(.title2.weight(.semibold))
-            Text("FaceUnlock now measures how consistently it recognises you, and sets your personal threshold from that. Calibration can only make recognition stricter than the preset you chose — never more permissive.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: Design.Spacing.large) {
+            StepHeader(
+                symbolName: "waveform.path.ecg",
+                title: "Calibrating",
+                subtitle: "FaceUnlock measures how consistently it recognises you and sets your personal threshold from that. Calibration can only make recognition stricter than the preset — never more permissive."
+            )
 
-            HStack(alignment: .top, spacing: Design.Spacing.large) {
-                LabelledCameraPreview(image: model.previewImage)
-                    .frame(width: 320)
+            FaceScannerView(
+                image: model.previewImage,
+                progress: model.calibrationProgress,
+                cue: model.isWorking ? .center : nil,
+                status: scannerStatus
+            )
 
-                VStack(alignment: .leading, spacing: Design.Spacing.medium) {
-                    ConfidenceMeter(
-                        value: model.latestConfidence,
-                        threshold: model.savedProfile?.recognitionThreshold
-                    )
-
-                    ProgressView(value: model.calibrationProgress) {
-                        Text("Samples collected")
-                    }
-                    .accessibilityValue("\(model.calibrationScores.count) of \(model.calibrationTarget)")
-
-                    if let profile = model.savedProfile {
-                        Card {
-                            VStack(alignment: .leading, spacing: Design.Spacing.small) {
-                                StatusRow(
-                                    symbolName: "checkmark.seal",
-                                    tint: .green,
-                                    title: "Calibrated",
-                                    detail: String(
-                                        format: "Threshold %.3f from %d samples",
-                                        profile.recognitionThreshold,
-                                        model.calibrationScores.count
-                                    )
-                                )
-                            }
-                        }
-                    }
-
-                    if model.isWorking {
-                        Button("Stop") { model.cancelWork() }
-                    } else {
-                        Button(model.savedProfile == nil ? "Start calibration" : "Calibrate again") {
-                            model.startCalibration()
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(model.draft == nil)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(spacing: 4) {
+                Text(headline)
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                Text(detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
+            .multilineTextAlignment(.center)
+            .frame(minHeight: 48)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.updatesFrequently)
+
+            ConfidenceMeter(
+                value: model.latestConfidence,
+                threshold: model.savedProfile?.recognitionThreshold
+            )
+            .frame(maxWidth: 360)
+
+            controls
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var headline: String {
+        if let profile = model.savedProfile {
+            return String(format: "Calibrated — threshold %.3f", profile.recognitionThreshold)
+        }
+        if model.isWorking { return "Look at the camera naturally" }
+        return "Ready to calibrate"
+    }
+
+    private var detail: String {
+        if model.savedProfile != nil {
+            return "\(model.calibrationScores.count) samples measured. Continue when you are ready."
+        }
+        if model.isWorking {
+            return "\(model.calibrationScores.count) of \(model.calibrationTarget) samples"
+        }
+        return "Small natural movements are fine — just keep looking at the screen."
+    }
+
+    private var scannerStatus: FaceScannerView.Status {
+        if model.savedProfile != nil { return .success }
+        if !model.isWorking { return .idle }
+        guard let latest = model.latestConfidence else { return .searching }
+        return latest >= SensitivityPreset.convenient.scoreFloor ? .aligned : .attention
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        if model.isWorking {
+            Button("Stop") { model.cancelWork() }
+                .controlSize(.large)
+        } else {
+            Button {
+                model.startCalibration()
+            } label: {
+                Label(model.savedProfile == nil ? "Start calibration" : "Calibrate again", systemImage: "waveform")
+                    .frame(minWidth: 160)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .disabled(model.draft == nil)
         }
     }
 }
@@ -121,7 +194,13 @@ struct ConfidenceMeter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Spacing.tight) {
-            Text("Confidence").font(.callout.weight(.medium))
+            HStack {
+                Text("Confidence").font(.caption.weight(.medium))
+                Spacer()
+                Text(valueDescription)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
@@ -137,8 +216,8 @@ struct ConfidenceMeter: View {
                     }
                 }
             }
-            .frame(height: 10)
-            Text(valueDescription).font(.caption).foregroundStyle(.secondary)
+            .frame(height: 8)
+            .animation(.easeOut(duration: 0.2), value: value)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Recognition confidence")
@@ -159,7 +238,7 @@ struct ConfidenceMeter: View {
     }
 
     private var valueDescription: String {
-        guard let value else { return "Waiting for a clear view of your face" }
+        guard let value else { return "—" }
         return String(format: "%.3f", value)
     }
 }
