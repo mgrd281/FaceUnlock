@@ -29,11 +29,24 @@ being baked into the project.
 
 The unit tests need no camera, no Keychain and no lock screen: every collaborator
 is behind a protocol with an in-memory or stub implementation, and descriptors are
-synthesised with a known angular relationship. They exercise matching and
-calibration policy, profile storage and encryption, the recognition state machine,
-lock-event delivery, the lock-screen verification matrix, unlock provider
-selection, the liveness heuristics against synthetic live/photo/replay/frozen
-sequences, preference clamping, and the diagnostics privacy boundary.
+synthesised with a known angular relationship. They exercise:
+
+- matching and calibration policy (`FaceMatcherTests`),
+- profile storage, encryption and corruption handling
+  (`BiometricProfileStoreTests`, `KeychainServiceTests`),
+- the recognition state machine (`RecognitionStateMachineTests`),
+- the whole coordinator end to end against a fake camera, detector, matcher and
+  unlock chain (`RecognitionCoordinatorTests`, `PipelineFakes.swift`),
+- lock-event delivery (`LockStateMonitorTests`),
+- the lock-screen verification matrix and every provider's refusal behaviour
+  (`SecurityValidationTests`),
+- unlock provider selection and rate limiting (`UnlockCoordinatorTests`),
+- the liveness heuristics against synthetic live / photo / screen-replay / frozen
+  sequences (`LivenessAnalyzerTests`),
+- the pixel statistics the quality gate rests on (`ImageAnalysisTests`),
+- credential validation and removal (`CredentialStoreTests`),
+- preference clamping and the diagnostics privacy boundary
+  (`PreferencesAndDiagnosticsTests`).
 
 ### Adding or removing source files
 

@@ -4,14 +4,19 @@ import IOKit.pwr_mgt
 /// The safest provider, and the only one that completes without the user
 /// touching the keyboard.
 ///
-/// It works *before* the lock rather than after it. While the enrolled user is
-/// recognised in front of the Mac, this provider declares user activity and holds
-/// a display-sleep assertion, so the idle timer never reaches the point where
-/// macOS would start the screen saver and lock the session. Both calls are public
-/// IOKit power-management APIs, they require no special permission, and they
-/// weaken nothing: the moment the assertion is released — because the user walked
-/// away, or FaceUnlock was paused or quit — macOS locks exactly as it was
-/// configured to.
+/// It works *before* the lock rather than after it. When the screen saver starts —
+/// which happens some time before the session actually locks, by whatever grace
+/// period the user configured — `RecognitionCoordinator` spends a few seconds of
+/// camera time looking for the enrolled user. If it finds them, this provider
+/// declares user activity, which wakes the display and resets the idle timer, and
+/// takes a short display-sleep assertion to cover the handover. The Mac then
+/// behaves exactly as if the user had moved the mouse.
+///
+/// Both calls are public IOKit power-management APIs, they need no special
+/// permission, and they weaken nothing: the assertion carries a timeout and is
+/// released as soon as it lapses, when FaceUnlock is paused, and when it quits —
+/// at which point macOS locks exactly as it was configured to. FaceUnlock never
+/// shortens or lengthens the user's own grace period.
 ///
 /// What it deliberately does not do: once the session is genuinely locked, this
 /// provider reports that it cannot act. Nothing here bypasses a lock that has
@@ -21,13 +26,15 @@ public actor PresenceUnlockProvider: UnlockProvider {
     public nonisolated let displayName = "Stay unlocked while you are here"
     public nonisolated let safetyRank = 0
     public nonisolated let explanation =
-        "Keeps this Mac from locking while it can see you, using the same power-management assertions macOS offers any app. It does not unlock a Mac that has already locked."
+        "When this Mac starts to go idle, FaceUnlock checks whether you are still in front of it and, if you are, resets the idle timer using the power-management assertions macOS offers any app. It does not unlock a Mac that has already locked."
 
     private let validator: any SecurityValidating
     private var assertionID: IOPMAssertionID = IOPMAssertionID(0)
     private var assertionHeld = false
-    /// How long an assertion lives without being renewed by a fresh recognition.
-    private let assertionTimeout: TimeInterval = 90
+    /// How long the assertion lives. It only has to cover the handover between
+    /// declaring user activity and macOS's idle timer restarting, so it is short —
+    /// a long assertion would keep the display awake for no reason.
+    private let assertionTimeout: TimeInterval = 30
 
     public init(validator: any SecurityValidating = SecurityValidator()) {
         self.validator = validator

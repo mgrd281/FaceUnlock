@@ -11,23 +11,19 @@ public struct DetectedFace: @unchecked Sendable {
     public let confidence: Double
     public let pose: FacePose
     public let landmarks: VNFaceLandmarks2D?
-    /// The originating observation, retained for the embedding stage.
-    public let observation: VNFaceObservation
 
     public init(
         pixelRect: CGRect,
         normalizedRect: CGRect,
         confidence: Double,
         pose: FacePose,
-        landmarks: VNFaceLandmarks2D?,
-        observation: VNFaceObservation
+        landmarks: VNFaceLandmarks2D?
     ) {
         self.pixelRect = pixelRect
         self.normalizedRect = normalizedRect
         self.confidence = confidence
         self.pose = pose
         self.landmarks = landmarks
-        self.observation = observation
     }
 }
 
@@ -77,8 +73,7 @@ public final class FaceDetector: FaceDetecting, @unchecked Sendable {
                     pitch: observation.pitch?.doubleValue ?? 0,
                     roll: observation.roll?.doubleValue ?? 0
                 ),
-                landmarks: observation.landmarks,
-                observation: observation
+                landmarks: observation.landmarks
             )
         }
     }

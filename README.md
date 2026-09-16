@@ -14,8 +14,9 @@ icons, models, assets or branding.
 - A **local face-recognition pipeline**: AVFoundation → Vision face detection →
   quality gating → aligned crop → on-device descriptor → matching against your
   enrolled profile → multi-frame liveness analysis.
-- A **presence keeper**: while it can see you, it holds a power-management
-  assertion so your Mac does not drift into the idle lock in the first place.
+- A **presence keeper**: when your Mac starts to go idle, it spends a few seconds
+  of camera time checking whether you are still there, and resets the idle timer
+  if you are — so the lock never happens in the first place.
 - An **honest reporter**: where macOS does not allow something, FaceUnlock says
   so in plain words instead of pretending.
 
@@ -85,7 +86,8 @@ personal threshold is derived from that. Calibration can only make recognition
 
 ## How recognition works
 
-1. The session locks. After a short configurable delay, the camera starts.
+1. Either the screen saver starts (the grace period before the session locks) or
+   the session locks outright. After a short configurable delay, the camera starts.
 2. Each frame is detected, quality-gated, aligned and turned into a descriptor.
 3. The descriptor is compared against every enrolled sample. The score is the
    mean of the best three similarities, not the single best — one lucky frame or
@@ -95,7 +97,9 @@ personal threshold is derived from that. Calibration can only make recognition
    natural head movement, micro-motion in the right band, absence of display-panel
    texture, and the parallax a real 3D head shows when it rotates.
 6. If, and only if, both the match and the liveness thresholds are met, the
-   camera is stopped and the safest available unlock provider runs.
+   camera is stopped and the safest available unlock provider runs. Before the
+   lock that is the presence provider, which resets the idle timer; after it, the
+   manual provider, which tells you that you were recognised.
 7. If nothing is found before the timeout, the camera stops and FaceUnlock waits
    for the next wake event rather than polling.
 

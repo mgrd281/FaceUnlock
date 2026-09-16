@@ -48,17 +48,20 @@ unlock.
 
 ## 2. The genuinely supported workflow is presence, not unlocking
 
-**What works fully, with public APIs and no special permission.**
-`PresenceUnlockProvider` declares user activity
-(`IOPMAssertionDeclareUserActivity`) and holds a
-`PreventUserIdleDisplaySleep` assertion while it can see you, so the Mac does not
-reach the idle lock in the first place. The assertion carries a timeout and is
-released the moment you are no longer recognised, when FaceUnlock is paused, and
-when it quits — at which point macOS resumes exactly the behaviour you
-configured.
+**What works fully, with public APIs and no special permission.** When the screen
+saver starts — which is some time before the session locks, by whatever grace
+period you configured — FaceUnlock spends a few seconds of camera time looking
+for you. If it finds you, `PresenceUnlockProvider` declares user activity
+(`IOPMAssertionDeclareUserActivity`), which wakes the display and resets the idle
+timer, and takes a short `PreventUserIdleDisplaySleep` assertion to cover the
+handover. The Mac then behaves as though you had moved the mouse.
 
-**Its limit.** It cannot act on a session that is already locked, and it says so
-rather than trying.
+**Its limits.** It cannot act on a session that is already locked, and it says so
+rather than trying. It is not continuous presence detection either: the camera is
+only used during the idle window, not all the time, which is what keeps FaceUnlock
+at essentially zero CPU while you are working. And if your grace period is
+"immediately", there is no window for it to act in at all — FaceUnlock falls back
+to the manual provider.
 
 ## 3. Locking on absence respects your settings, and cannot shorten them
 

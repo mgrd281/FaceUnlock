@@ -40,6 +40,7 @@ public actor RecognitionCoordinator {
     private let unlockCoordinator: any UnlockCoordinating
     private let lockMonitor: any LockStateMonitoring
     private let permissions: any PermissionManaging
+    private let sessionLocker: any SessionLocking
     private let configurationProvider: @Sendable () async -> RecognitionRuntimeConfiguration
     /// Only instantiated for `RecognitionPurpose.test`; an unlock attempt never
     /// renders a frame anywhere.
@@ -65,6 +66,7 @@ public actor RecognitionCoordinator {
         unlockCoordinator: any UnlockCoordinating,
         lockMonitor: any LockStateMonitoring,
         permissions: any PermissionManaging,
+        sessionLocker: any SessionLocking,
         configurationProvider: @escaping @Sendable () async -> RecognitionRuntimeConfiguration
     ) {
         self.camera = camera
@@ -78,6 +80,7 @@ public actor RecognitionCoordinator {
         self.unlockCoordinator = unlockCoordinator
         self.lockMonitor = lockMonitor
         self.permissions = permissions
+        self.sessionLocker = sessionLocker
         self.configurationProvider = configurationProvider
     }
 
@@ -163,13 +166,19 @@ public actor RecognitionCoordinator {
 
     private func handle(_ event: LockEvent) async {
         switch event {
-        case .screenLocked, .screensaverStarted:
-            await beginUnlockAttemptIfAppropriate()
+        case .screenLocked:
+            await beginAttemptIfAppropriate(trigger: .screenLocked)
+        case .screensaverStarted:
+            // The screen saver starts *before* the session locks, by however long
+            // the user's "require password after…" grace period is. That window is
+            // the only moment the presence provider can act at all, because once the
+            // session is locked nothing can defer the lock any more.
+            await beginAttemptIfAppropriate(trigger: .idleApproaching)
         case .screensDidWake, .systemDidWake, .screensaverStopped:
             // A wake while still locked is the cheapest possible retry trigger:
             // the user just did something, so they are probably in front of the Mac.
             if lockMonitor.isScreenLocked() {
-                await beginUnlockAttemptIfAppropriate()
+                await beginAttemptIfAppropriate(trigger: .screenLocked)
             }
         case .screenUnlocked:
             apply(.attemptFinished)
@@ -182,18 +191,30 @@ public actor RecognitionCoordinator {
         }
     }
 
-    private func beginUnlockAttemptIfAppropriate() async {
+    /// Why an attempt is starting. The two cases differ in what the session state
+    /// is allowed to be, and therefore in which providers can act.
+    private enum AttemptTrigger {
+        /// The session is locked. Only the manual and assisted providers apply.
+        case screenLocked
+        /// The screen saver has started but the session has not locked yet, so the
+        /// presence provider can still defer the lock.
+        case idleApproaching
+    }
+
+    private func beginAttemptIfAppropriate(trigger: AttemptTrigger) async {
         let configuration = await configurationProvider()
         guard configuration.unlockEnabled, !configuration.isPaused else { return }
         guard cachedProfile != nil else { return }
         guard attemptTask == nil else { return }
 
-        let delay = configuration.settings.startDelayAfterLock
-        if delay > 0 {
-            // Give the lock animation time to finish before lighting up the camera.
-            try? await Task.sleep(for: .seconds(delay))
+        if trigger == .screenLocked {
+            let delay = configuration.settings.startDelayAfterLock
+            if delay > 0 {
+                // Give the lock animation time to finish before lighting up the camera.
+                try? await Task.sleep(for: .seconds(delay))
+            }
+            guard lockMonitor.isScreenLocked() else { return }
         }
-        guard lockMonitor.isScreenLocked() else { return }
         _ = await runAttempt(purpose: .unlock)
     }
 
@@ -333,6 +354,7 @@ public actor RecognitionCoordinator {
             }
         } else if case let .rejected(reason) = verdict {
             apply(.rejected(reason))
+            await lockIfUserIsAbsent(purpose: purpose)
         } else if case let .failed(error) = verdict {
             apply(.failed(error))
         }
@@ -444,6 +466,27 @@ public actor RecognitionCoordinator {
         guard assessment.score >= livenessConfiguration.minimumScore else { return .keepLooking }
 
         return .recognized
+    }
+
+    /// Puts the display to sleep when the enrolled user was not found and the
+    /// session is still unlocked.
+    ///
+    /// This only ever runs inside the pre-lock grace window — the attempt that
+    /// reaches it was started by the screen saver, not by a lock — so it costs
+    /// nothing while the Mac is in use, and macOS still applies the user's own
+    /// "require password after…" setting afterwards. FaceUnlock never shortens it.
+    private func lockIfUserIsAbsent(purpose: RecognitionPurpose) async {
+        guard purpose == .unlock else { return }
+        let configuration = await configurationProvider()
+        guard configuration.lockWhenAbsent else { return }
+        guard !lockMonitor.isScreenLocked() else { return }
+        do {
+            try await sessionLocker.lockDisplay()
+        } catch {
+            AppLogger.unlock.error(
+                "Could not put the display to sleep: \((error as? FaceUnlockError)?.code ?? "unknown", privacy: .public)"
+            )
+        }
     }
 
     /// Runs the unlock chain for a confirmed recognition.

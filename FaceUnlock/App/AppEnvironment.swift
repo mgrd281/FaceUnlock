@@ -129,6 +129,7 @@ public final class AppEnvironment {
             unlockCoordinator: unlockCoordinator,
             lockMonitor: lockMonitor,
             permissions: permissions,
+            sessionLocker: sessionLocker,
             configurationProvider: {
                 await MainActor.run {
                     RecognitionRuntimeConfiguration(
