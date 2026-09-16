@@ -14,12 +14,19 @@ public protocol FaceQualityAnalyzing: Sendable {
 
 public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendable {
     public struct Thresholds: Sendable {
-        public var minimumFaceSize: Double = 0.17
+        /// Fraction of the frame's shorter edge the face box must cover.
+        ///
+        /// 0.17 turned out to reject someone sitting back from a laptop at a
+        /// perfectly ordinary distance. At 720p capture, 0.12 still leaves an
+        /// ~86-pixel face box to align and describe, which is ample.
+        public var minimumFaceSize: Double = 0.12
         public var maximumFaceSize: Double = 0.95
         public var minimumLuminance: Double = 0.16
         public var maximumLuminance: Double = 0.92
         public var minimumSharpness: Double = 0.30
-        public var minimumLandmarkConfidence: Double = 0.55
+        // A turned head legitimately lowers landmark confidence, and the turned
+        // poses are exactly the ones enrolment needs.
+        public var minimumLandmarkConfidence: Double = 0.45
         public var maximumMotion: Double = 0.16
         public var maximumAbsoluteYaw: Double = 0.62
         public var maximumAbsolutePitch: Double = 0.52
@@ -41,12 +48,12 @@ public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendabl
     }
 
     public func evaluate(faces: [DetectedFace], frame: CameraFrame) -> FaceQualityVerdict {
-        guard !faces.isEmpty else { return .rejected([.noFace]) }
-        guard faces.count == 1 else { return .rejected([.multipleFaces]) }
-        guard let face = faces.first else { return .rejected([.noFace]) }
+        guard !faces.isEmpty else { return .rejected([.noFace], nil) }
+        guard faces.count == 1 else { return .rejected([.multipleFaces], nil) }
+        guard let face = faces.first else { return .rejected([.noFace], nil) }
 
         let shorterEdge = Double(min(frame.width, frame.height))
-        guard shorterEdge > 0 else { return .rejected([.noFace]) }
+        guard shorterEdge > 0 else { return .rejected([.noFace], nil) }
         let faceSize = Double(face.pixelRect.height) / shorterEdge
 
         let bounds = CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
@@ -54,7 +61,7 @@ public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendabl
             pixelBuffer: frame.pixelBuffer,
             cropRect: face.pixelRect.expanded(by: 1.1, clampedTo: bounds)
         ) else {
-            return .rejected([.noFace])
+            return .rejected([.noFace], nil)
         }
 
         let luminance = ImageAnalysis.meanLuminance(grid)
@@ -84,7 +91,7 @@ public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendabl
             issues.append(.extremePose)
         }
 
-        return issues.isEmpty ? .acceptable(quality) : .rejected(issues)
+        return issues.isEmpty ? .acceptable(quality) : .rejected(issues, quality)
     }
 
     private func motionSince(_ grid: GrayscaleGrid) -> Double {

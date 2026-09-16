@@ -11,6 +11,8 @@ public struct EnrollmentUpdate: @unchecked Sendable {
     public var isComplete: Bool
     /// True when a single, acceptable-quality face was in frame for this update.
     public var faceInPosition: Bool = false
+    /// What the quality gate measured, when it had a face to measure.
+    public var quality: FaceQuality?
 
     public var totalCaptured: Int { capturedByStep.values.reduce(0, +) }
     public var totalRequired: Int {
@@ -127,7 +129,8 @@ public actor EnrollmentCoordinator {
                         issues: evaluation.issues,
                         guidance: evaluation.issues.first?.message ?? step.instruction,
                         preview: preview,
-                        isComplete: false
+                        isComplete: false,
+                        quality: evaluation.measured
                     )
                 )
                 continue
@@ -142,7 +145,8 @@ public actor EnrollmentCoordinator {
                         guidance: Self.guidance(for: step, measured: measured.pose),
                         preview: preview,
                         isComplete: false,
-                        faceInPosition: true
+                        faceInPosition: true,
+                        quality: measured
                     )
                 )
                 continue
@@ -178,7 +182,8 @@ public actor EnrollmentCoordinator {
                         guidance: "Hold that position — moving very slightly helps.",
                         preview: preview,
                         isComplete: false,
-                        faceInPosition: true
+                        faceInPosition: true,
+                        quality: measured
                     )
                 )
                 continue
@@ -204,7 +209,8 @@ public actor EnrollmentCoordinator {
                     guidance: stepIndex < steps.count ? nextStep.instruction : "All set.",
                     preview: preview,
                     isComplete: stepIndex >= steps.count,
-                    faceInPosition: true
+                    faceInPosition: true,
+                    quality: measured
                 )
             )
             if stepIndex >= steps.count { break }

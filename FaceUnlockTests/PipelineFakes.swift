@@ -79,7 +79,7 @@ struct FakeQualityAnalyzer: FaceQualityAnalyzing {
     let acceptable: Bool
 
     func evaluate(faces: [DetectedFace], frame: CameraFrame) -> FaceQualityVerdict {
-        guard acceptable else { return .rejected([.blurry]) }
+        guard acceptable else { return .rejected([.blurry], nil) }
         return .acceptable(
             FaceQuality(
                 faceSize: 0.4, luminance: 0.5, sharpness: 0.8,

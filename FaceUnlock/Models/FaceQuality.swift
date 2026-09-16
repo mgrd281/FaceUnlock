@@ -68,15 +68,37 @@ public enum FaceQualityIssue: String, Equatable, Sendable, CaseIterable {
 /// Outcome of the quality gate for one frame.
 public enum FaceQualityVerdict: Equatable, Sendable {
     case acceptable(FaceQuality)
-    case rejected([FaceQualityIssue])
+    /// Carries the measurements as well as the issues: a user told "move closer"
+    /// deserves to see how close they actually are, and it is the only way to
+    /// tell a badly chosen threshold from a genuinely bad frame.
+    case rejected([FaceQualityIssue], FaceQuality?)
 
     public var quality: FaceQuality? {
         if case let .acceptable(quality) = self { return quality }
         return nil
     }
 
+    /// What was measured, whether or not the frame was accepted.
+    public var measured: FaceQuality? {
+        switch self {
+        case let .acceptable(quality): return quality
+        case let .rejected(_, quality): return quality
+        }
+    }
+
     public var issues: [FaceQualityIssue] {
-        if case let .rejected(issues) = self { return issues }
+        if case let .rejected(issues, _) = self { return issues }
         return []
+    }
+}
+
+extension FaceQuality {
+    /// A compact, non-sensitive readout of the measurements, for the enrolment
+    /// screen and diagnostics. Contains no descriptor and no image data.
+    public var readout: String {
+        String(
+            format: "face %.0f%% · light %.0f%% · sharp %.0f%%",
+            faceSize * 100, luminance * 100, sharpness * 100
+        )
     }
 }

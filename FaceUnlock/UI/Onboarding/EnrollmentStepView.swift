@@ -31,9 +31,15 @@ struct EnrollmentStepView: View {
             VStack(spacing: 4) {
                 Text(instruction)
                     .font(.system(.title3, design: .rounded, weight: .semibold))
-                Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                if let blocker {
+                    Label(blocker, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
             .multilineTextAlignment(.center)
             .frame(minHeight: 44)
@@ -47,11 +53,32 @@ struct EnrollmentStepView: View {
             )
 
             controls
+
+            if let readout {
+                // Shown only while something is blocking capture. It is the
+                // difference between "it just will not work" and "the face box is
+                // at 9%, so move closer" — and it carries no image or descriptor
+                // data, only three percentages.
+                Text(readout)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity)
     }
 
     // MARK: - Derived presentation
+
+    /// The quality issue standing between the user and a captured sample.
+    private var blocker: String? {
+        guard model.isWorking, let issue = update?.issues.first else { return nil }
+        return issue.message
+    }
+
+    private var readout: String? {
+        guard model.isWorking, update?.issues.isEmpty == false else { return nil }
+        return update?.quality?.readout
+    }
 
     private var instruction: String {
         guard model.isWorking || update != nil else { return "Ready when you are" }

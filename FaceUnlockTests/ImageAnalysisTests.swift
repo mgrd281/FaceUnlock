@@ -78,3 +78,57 @@ final class ImageAnalysisTests: XCTestCase {
         XCTAssertEqual(zero.cosineSimilarity(to: zero), 0, accuracy: 1e-9)
     }
 }
+
+/// The quality gate's thresholds are a usability/security trade-off, so they get
+/// their own guard rails.
+final class FaceQualityTests: XCTestCase {
+    private func quality(faceSize: Double) -> FaceQuality {
+        FaceQuality(
+            faceSize: faceSize, luminance: 0.5, sharpness: 0.8,
+            landmarkConfidence: 0.9, motion: 0.02, pose: FacePose()
+        )
+    }
+
+    /// A rejection has to say what was measured, or "move closer" is unfalsifiable.
+    func testRejectionCarriesItsMeasurements() {
+        let measured = quality(faceSize: 0.09)
+        let verdict = FaceQualityVerdict.rejected([.faceTooSmall], measured)
+        XCTAssertEqual(verdict.issues, [.faceTooSmall])
+        XCTAssertEqual(verdict.measured, measured)
+        XCTAssertNil(verdict.quality, "a rejected frame is not an acceptable one")
+    }
+
+    func testAcceptanceExposesTheSameMeasurementsBothWays() {
+        let measured = quality(faceSize: 0.4)
+        let verdict = FaceQualityVerdict.acceptable(measured)
+        XCTAssertEqual(verdict.quality, measured)
+        XCTAssertEqual(verdict.measured, measured)
+        XCTAssertTrue(verdict.issues.isEmpty)
+    }
+
+    /// The readout is shown on screen, so it must stay free of anything sensitive.
+    func testReadoutIsThreePercentagesAndNothingElse() {
+        let readout = quality(faceSize: 0.123).readout
+        XCTAssertTrue(readout.contains("face"))
+        XCTAssertTrue(readout.contains("light"))
+        XCTAssertTrue(readout.contains("sharp"))
+        XCTAssertFalse(readout.contains("pose"))
+        XCTAssertFalse(readout.contains("yaw"))
+    }
+
+    func testDefaultThresholdsAdmitAnOrdinarySeatedUser() {
+        let thresholds = FaceQualityAnalyzer.Thresholds()
+        // Roughly a face at arm's length from a laptop, which must not be refused.
+        XCTAssertLessThanOrEqual(thresholds.minimumFaceSize, 0.15)
+        // ...but a speck in the corner still has to be.
+        XCTAssertGreaterThan(thresholds.minimumFaceSize, 0.05)
+        XCTAssertLessThan(thresholds.minimumLandmarkConfidence, 0.5)
+        XCTAssertGreaterThan(thresholds.minimumLandmarkConfidence, 0.2)
+    }
+
+    func testEveryIssueHasItsOwnSentence() {
+        let messages = FaceQualityIssue.allCases.map(\.message)
+        XCTAssertEqual(Set(messages).count, FaceQualityIssue.allCases.count)
+        XCTAssertTrue(messages.allSatisfy { $0.count > 10 })
+    }
+}

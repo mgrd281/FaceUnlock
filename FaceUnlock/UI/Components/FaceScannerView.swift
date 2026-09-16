@@ -188,10 +188,13 @@ public struct FaceScannerView: View {
 
     // MARK: - Styling
 
+    /// Green is reserved for "this frame is good". While the pipeline is still
+    /// looking, the ring stays neutral — an encouraging green during a frame the
+    /// analyser is actually rejecting reads as a contradiction.
     private var statusColor: Color {
         switch status {
         case .idle: return .secondary
-        case .searching: return accent
+        case .searching: return .white.opacity(0.45)
         case .aligned, .success: return .green
         case .attention, .failure: return .orange
         }
