@@ -43,6 +43,7 @@ public final class OnboardingModel {
     public private(set) var calibrationScores: [Double] = []
     public private(set) var calibrationTarget = 20
     public private(set) var isWorking = false
+    public private(set) var isRequestingCamera = false
     public private(set) var draft: EnrollmentDraft?
     public private(set) var savedProfile: BiometricProfile?
     public var error: FaceUnlockError?
@@ -57,10 +58,10 @@ public final class OnboardingModel {
     }
 
     public var compatibility: SystemCompatibilityReport? { environment.compatibility }
-    public var cameraPermission: PermissionState { environment.permissions.cameraPermissionState() }
-    public var accessibilityPermission: PermissionState {
-        environment.permissions.accessibilityPermissionState()
-    }
+    // Read from the environment's observed mirrors, not from `PermissionManager`
+    // directly: a plain function call would not invalidate the view.
+    public var cameraPermission: PermissionState { environment.cameraPermission }
+    public var accessibilityPermission: PermissionState { environment.accessibilityPermission }
 
     public var canAdvance: Bool {
         switch step {
@@ -111,9 +112,17 @@ public final class OnboardingModel {
     // MARK: Steps
 
     public func requestCameraAccess() {
+        guard !isRequestingCamera else { return }
+        isRequestingCamera = true
         Task {
             let state = await self.environment.permissions.requestCameraAccess()
-            if state != .granted {
+            self.environment.refreshPermissions()
+            self.isRequestingCamera = false
+            if state == .granted {
+                // Nothing left to decide on this step, so move on rather than
+                // making the user find the Next button.
+                self.advance()
+            } else {
                 self.error = .cameraPermissionDenied
             }
             await self.environment.refreshEverything()

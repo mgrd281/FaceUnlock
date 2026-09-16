@@ -103,7 +103,7 @@ struct EnrollmentStepView: View {
                 Label(update == nil ? "Start" : "Start again", systemImage: "camera.fill")
                     .frame(minWidth: 140)
             }
-            .buttonStyle(.borderedProminent)
+            .primaryActionStyle(inNotch: inNotch)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
         }
@@ -194,7 +194,7 @@ struct CalibrationStepView: View {
                 Label(model.savedProfile == nil ? "Start calibration" : "Calibrate again", systemImage: "waveform")
                     .frame(minWidth: 160)
             }
-            .buttonStyle(.borderedProminent)
+            .primaryActionStyle(inNotch: inNotch)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
             .disabled(model.draft == nil)

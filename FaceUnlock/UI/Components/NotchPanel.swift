@@ -35,6 +35,28 @@ extension EnvironmentValues {
     }
 }
 
+/// Reports the intrinsic height of the panel's content so the panel can hug it.
+///
+/// Measured on the content itself, never on a view that fills the panel, so the
+/// value can never depend on the height it is about to set — which would loop.
+struct NotchContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+extension View {
+    /// Publishes this view's measured height to the enclosing notch panel.
+    func reportsNotchHeight() -> some View {
+        background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: NotchContentHeightKey.self, value: proxy.size.height)
+            }
+        )
+    }
+}
+
 /// A borderless panel that hangs from the top edge of the screen, flush with the
 /// camera housing on Macs that have one.
 final class NotchPanel: NSPanel {
@@ -62,7 +84,7 @@ final class NotchPanelController {
 
     private var panel: NotchPanel?
     private(set) var currentClient: Client?
-    private var currentSize: CGSize = .zero
+    private var currentWidth: CGFloat = 0
 
     var isPresenting: Bool { currentClient != nil }
 
@@ -74,6 +96,10 @@ final class NotchPanelController {
 
         let hosted = NotchPanelContainer { content() }
             .environment(\.notchPresentation, true)
+            .onPreferenceChange(NotchContentHeightKey.self) { [weak self] height in
+                guard let self else { return }
+                Task { @MainActor in self.resize(toContentHeight: height, for: client) }
+            }
 
         let panel = self.panel ?? makePanel()
         self.panel = panel
@@ -108,8 +134,22 @@ final class NotchPanelController {
             panel.makeKey()
         }
         currentClient = client
-        currentSize = size
+        currentWidth = size.width
         return true
+    }
+
+    /// Animates the panel to hug its content.
+    private func resize(toContentHeight height: CGFloat, for client: Client) {
+        guard currentClient == client, let panel, height > 80 else { return }
+        let limit = screen.visibleFrame.height - 32
+        let clamped = min(max(height, 180), limit)
+        guard abs(clamped - panel.frame.height) > 1 else { return }
+        let target = frame(for: CGSize(width: currentWidth, height: clamped))
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.22
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(target, display: true)
+        }
     }
 
     /// Hides the panel if `client` is the one currently shown.
@@ -145,7 +185,9 @@ final class NotchPanelController {
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .statusBar
+        // Deliberately not `.statusBar`: a TCC permission dialog must be able to
+        // appear above the panel, and at status-bar level it would not.
+        panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.backgroundColor = .clear
         panel.isOpaque = false

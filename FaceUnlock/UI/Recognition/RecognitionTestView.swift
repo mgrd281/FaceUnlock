@@ -56,6 +56,7 @@ public struct RecognitionTestView: View {
             }
             .padding(inNotch ? Design.Spacing.large : Design.Spacing.section)
             .frame(maxWidth: .infinity)
+            .reportsNotchHeight()
         }
         .frame(minWidth: inNotch ? 0 : 720, minHeight: inNotch ? 0 : 700)
         .onDisappear { stop() }
@@ -163,7 +164,7 @@ public struct RecognitionTestView: View {
                 Label(result == nil ? "Run test" : "Run again", systemImage: "play.fill")
                     .frame(minWidth: 140)
             }
-            .buttonStyle(.borderedProminent)
+            .primaryActionStyle(inNotch: inNotch)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
             .disabled(environment.profileSummary == nil)

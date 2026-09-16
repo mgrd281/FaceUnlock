@@ -95,6 +95,7 @@ public struct RecognitionOverlayView: View {
         .padding(.horizontal, Design.Spacing.large)
         .padding(.top, Design.Spacing.section)
         .padding(.bottom, Design.Spacing.large)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .reportsNotchHeight()
     }
 }

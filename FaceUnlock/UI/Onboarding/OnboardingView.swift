@@ -40,29 +40,40 @@ public struct OnboardingView: View {
                     .padding(.bottom, Design.Spacing.small)
             }
 
-            ScrollView {
-                VStack(spacing: Design.Spacing.large) {
-                    if let error = model.error {
-                        ErrorBanner(error: error) { model.error = nil }
-                            .frame(maxWidth: 640)
-                    }
-                    stepContent(model)
-                        .transition(.opacity)
-                }
-                .padding(.horizontal, inNotch ? Design.Spacing.large : Design.Spacing.section)
-                .padding(.top, inNotch ? Design.Spacing.section : Design.Spacing.large)
-                .padding(.bottom, Design.Spacing.large)
-                .frame(maxWidth: .infinity)
+            if inNotch {
+                // No scroll view: the panel resizes to the content instead, so the
+                // step is never squeezed and never floats in a field of black.
+                stepBody(model)
+            } else {
+                ScrollView { stepBody(model) }
+                    .animation(.easeInOut(duration: 0.2), value: model.step)
             }
-            .animation(.easeInOut(duration: 0.2), value: model.step)
 
             if !inNotch { Divider() }
 
             footer(model)
                 .padding(.horizontal, inNotch ? Design.Spacing.large : Design.Spacing.section)
-                .padding(.vertical, Design.Spacing.medium)
+                .padding(.top, inNotch ? Design.Spacing.small : Design.Spacing.medium)
+                .padding(.bottom, inNotch ? Design.Spacing.medium : Design.Spacing.medium)
         }
         .background(inNotch ? Color.black : Color(nsColor: .windowBackgroundColor))
+        .reportsNotchHeight()
+    }
+
+    private func stepBody(_ model: OnboardingModel) -> some View {
+        VStack(spacing: Design.Spacing.large) {
+            if let error = model.error {
+                ErrorBanner(error: error) { model.error = nil }
+                    .frame(maxWidth: 640)
+            }
+            stepContent(model)
+                .transition(.opacity)
+        }
+        .padding(.horizontal, inNotch ? Design.Spacing.large : Design.Spacing.section)
+        .padding(.top, inNotch ? Design.Spacing.section : Design.Spacing.large)
+        .padding(.bottom, Design.Spacing.large)
+        .frame(maxWidth: .infinity)
+        .animation(.easeInOut(duration: 0.2), value: model.step)
     }
 
     @ViewBuilder
@@ -73,7 +84,10 @@ public struct OnboardingView: View {
         case .compatibility:
             CompatibilityStepView(report: model.compatibility)
         case .cameraPermission:
-            CameraPermissionStepView(state: model.cameraPermission) {
+            CameraPermissionStepView(
+                state: model.cameraPermission,
+                isRequesting: model.isRequestingCamera
+            ) {
                 model.requestCameraAccess()
             }
         case .accessibility:
@@ -151,6 +165,43 @@ struct NotchFooterButtonStyle: ButtonStyle {
             .padding(.vertical, 6)
             .padding(.horizontal, 4)
             .contentShape(Rectangle())
+    }
+}
+
+/// The filled green action button used inside notch-panel steps.
+struct NotchPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 9)
+            .background(
+                Capsule().fill(Color.green.opacity(configuration.isPressed ? 0.72 : 1))
+            )
+            .opacity(isEnabled ? 1 : 0.35)
+            .contentShape(Capsule())
+    }
+}
+
+/// Chooses between the notch's filled green button and the standard prominent one.
+struct PrimaryActionStyling: ViewModifier {
+    let inNotch: Bool
+
+    func body(content: Content) -> some View {
+        if inNotch {
+            content.buttonStyle(NotchPrimaryButtonStyle())
+        } else {
+            content.buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+extension View {
+    func primaryActionStyle(inNotch: Bool) -> some View {
+        modifier(PrimaryActionStyling(inNotch: inNotch))
     }
 }
 

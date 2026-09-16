@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct WelcomeStepView: View {
+    @Environment(\.notchPresentation) private var inNotch
+
     var body: some View {
-        VStack(spacing: Design.Spacing.section) {
+        VStack(spacing: inNotch ? Design.Spacing.large : Design.Spacing.section) {
             StepHeader(
                 symbolName: "faceid",
                 title: "FaceUnlock",
@@ -33,20 +35,23 @@ struct WelcomeStepView: View {
             }
             .frame(maxWidth: 640)
 
-            Text("The next steps check what this Mac supports, ask for the permissions FaceUnlock needs, and record your face.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
+            if !inNotch {
+                Text("The next steps check what this Mac supports, ask for the permissions FaceUnlock needs, and record your face.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 560)
+            }
         }
     }
 }
 
 struct CompatibilityStepView: View {
     let report: SystemCompatibilityReport?
+    @Environment(\.notchPresentation) private var inNotch
 
     var body: some View {
-        VStack(spacing: Design.Spacing.section) {
+        VStack(spacing: inNotch ? Design.Spacing.large : Design.Spacing.section) {
             StepHeader(
                 symbolName: "checkmark.seal",
                 title: "Compatibility",
@@ -90,10 +95,13 @@ struct CompatibilityStepView: View {
 
 struct CameraPermissionStepView: View {
     let state: PermissionState
+    var isRequesting: Bool = false
     let onRequest: () -> Void
 
+    @Environment(\.notchPresentation) private var inNotch
+
     var body: some View {
-        VStack(spacing: Design.Spacing.section) {
+        VStack(spacing: inNotch ? Design.Spacing.large : Design.Spacing.section) {
             StepHeader(
                 symbolName: "camera",
                 title: "Camera access",
@@ -114,18 +122,21 @@ struct CameraPermissionStepView: View {
                 Button {
                     onRequest()
                 } label: {
-                    Label("Allow Camera Access", systemImage: "camera.fill")
-                        .frame(minWidth: 180)
+                    Label(
+                        isRequesting ? "Waiting for your answer…" : "Allow Camera Access",
+                        systemImage: "camera.fill"
+                    )
                 }
-                .buttonStyle(.borderedProminent)
+                .primaryActionStyle(inNotch: inNotch)
                 .controlSize(.large)
+                .disabled(isRequesting)
                 .keyboardShortcut(.defaultAction)
             } else if state != .granted {
                 VStack(spacing: Design.Spacing.small) {
                     Button("Open Camera Settings") {
                         SystemSettingsLinks.open(SystemSettingsLinks.camera)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .primaryActionStyle(inNotch: inNotch)
                     .controlSize(.large)
                     Text(SystemSettingsLinks.cameraPath)
                         .font(.caption)
@@ -143,8 +154,10 @@ struct AccessibilityStepView: View {
     let state: PermissionState
     let onPrompt: () -> Void
 
+    @Environment(\.notchPresentation) private var inNotch
+
     var body: some View {
-        VStack(spacing: Design.Spacing.section) {
+        VStack(spacing: inNotch ? Design.Spacing.large : Design.Spacing.section) {
             StepHeader(
                 symbolName: "accessibility",
                 title: "Accessibility access",
@@ -173,22 +186,27 @@ struct AccessibilityStepView: View {
                 Button("Open Accessibility Settings") {
                     SystemSettingsLinks.open(SystemSettingsLinks.accessibility)
                 }
+                .primaryActionStyle(inNotch: inNotch)
                 Button("Ask macOS now", action: onPrompt)
+                    .footerStyle(inNotch: inNotch, prominent: false)
             }
             .controlSize(.large)
 
-            Text(SystemSettingsLinks.accessibilityPath)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !inNotch {
+                Text(SystemSettingsLinks.accessibilityPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
 
 struct FinishedStepView: View {
     let environment: AppEnvironment
+    @Environment(\.notchPresentation) private var inNotch
 
     var body: some View {
-        VStack(spacing: Design.Spacing.section) {
+        VStack(spacing: inNotch ? Design.Spacing.large : Design.Spacing.section) {
             StepHeader(
                 symbolName: "checkmark.seal.fill",
                 title: "FaceUnlock is set up",

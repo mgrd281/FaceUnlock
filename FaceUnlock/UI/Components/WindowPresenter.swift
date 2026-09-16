@@ -43,9 +43,11 @@ public final class WindowPresenter {
     private let notch = NotchPanelController()
 
     /// Sizes of the surfaces hosted in the notch panel.
-    static let assistantPanelSize = CGSize(width: 660, height: 600)
-    static let testPanelSize = CGSize(width: 620, height: 640)
-    static let overlayPanelSize = CGSize(width: 380, height: 132)
+    /// Widths are fixed; the heights are only the opening estimate, because the
+    /// panel resizes itself to hug whatever the current step reports.
+    static let assistantPanelSize = CGSize(width: 560, height: 520)
+    static let testPanelSize = CGSize(width: 540, height: 600)
+    static let overlayPanelSize = CGSize(width: 360, height: 130)
 
     public init() {}
 

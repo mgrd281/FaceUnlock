@@ -41,6 +41,11 @@ public final class AppEnvironment {
     public private(set) var status: AppStatus = .notConfigured
     public private(set) var progress: RecognitionProgress = RecognitionProgress(status: .notConfigured)
     public private(set) var compatibility: SystemCompatibilityReport?
+    /// Mirrored here rather than read through `permissions` on demand: a plain
+    /// function call is invisible to SwiftUI's observation, so the UI would never
+    /// react to the user answering a system permission prompt.
+    public private(set) var cameraPermission: PermissionState = .notDetermined
+    public private(set) var accessibilityPermission: PermissionState = .denied
     public private(set) var providerSummaries: [ProviderSummary] = []
     public private(set) var unlockCapability: SessionUnlockCapability = .unsupported
     public private(set) var statistics = RecognitionStatistics()
@@ -50,6 +55,7 @@ public final class AppEnvironment {
     public var presentedError: FaceUnlockError?
 
     private var statusTask: Task<Void, Never>?
+    private var activationObserver: NSObjectProtocol?
     private var hasStarted = false
     private var compatibilityBuilder: SystemCompatibility?
     /// Mirrors of main-actor state that background `@Sendable` closures need.
@@ -168,12 +174,17 @@ public final class AppEnvironment {
         windows.attach(environment: self)
         await recognitionCoordinator.start()
         observeStatus()
+        observeActivation()
         await refreshEverything()
         AppLogger.lifecycle.notice("FaceUnlock is running")
     }
 
     public func shutdown() async {
         hasStarted = false
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+            self.activationObserver = nil
+        }
         statusTask?.cancel()
         statusTask = nil
         await recognitionCoordinator.stop()
@@ -192,6 +203,30 @@ public final class AppEnvironment {
         }
     }
 
+    /// Re-reads the permission states whenever the app comes back to the front.
+    ///
+    /// Answering a prompt, or flipping a switch in System Settings, happens outside
+    /// this process; returning to FaceUnlock is the moment to notice.
+    private func observeActivation() {
+        guard activationObserver == nil else { return }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // `queue: .main` guarantees this runs on the main thread.
+            MainActor.assumeIsolated {
+                self?.refreshPermissions()
+            }
+        }
+    }
+
+    /// Cheap, synchronous re-read of the two permission states.
+    public func refreshPermissions() {
+        cameraPermission = permissions.cameraPermissionState()
+        accessibilityPermission = permissions.accessibilityPermissionState()
+    }
+
     /// Shows the notch indicator while an attempt is active and hides it once the
     /// coordinator settles. A user-opened panel (assistant, test) always wins.
     private func syncRecognitionOverlay() {
@@ -208,6 +243,7 @@ public final class AppEnvironment {
     }
 
     public func refreshEverything() async {
+        refreshPermissions()
         await recognitionCoordinator.refreshPreconditions()
         status = await recognitionCoordinator.status
         statistics = await recognitionCoordinator.currentStatistics
