@@ -30,11 +30,32 @@ public enum SensitivityPreset: String, Codable, CaseIterable, Sendable, Identifi
 
     /// Absolute floor for the match score, independent of calibration. Calibration
     /// may raise the threshold but never lower it below this value.
-    public var scoreFloor: Double {
-        switch self {
-        case .strict: return 0.92
-        case .balanced: return 0.88
-        case .convenient: return 0.84
+    ///
+    /// The floor depends on which descriptor produced the scores, because the two
+    /// pipelines live on different scales. Scores are `(cosine + 1) / 2`:
+    ///
+    /// - The Vision feature-print descriptor is a general image descriptor, so
+    ///   even unrelated faces score high (impostors ≈ 0.80–0.86, the same person
+    ///   ≈ 0.90–0.97). Its floors therefore sit at 0.84 and above.
+    /// - The bundled FaceNet-style network is metric-learned for identity: the
+    ///   same person typically lands at cosine 0.6–0.85 (score 0.80–0.93) and a
+    ///   different person at cosine −0.1–0.35 (score 0.45–0.68). The published
+    ///   VGGFace2 operating point (L2 distance 1.1 ≈ cosine 0.40 ≈ score 0.70)
+    ///   is the *convenient* floor; *balanced* and *strict* sit well above it.
+    public func scoreFloor(for source: FaceEmbedding.Source) -> Double {
+        switch source {
+        case .coreMLModel:
+            switch self {
+            case .strict: return 0.80
+            case .balanced: return 0.75
+            case .convenient: return 0.71
+            }
+        case .visionFeaturePrint, .synthetic:
+            switch self {
+            case .strict: return 0.92
+            case .balanced: return 0.88
+            case .convenient: return 0.84
+            }
         }
     }
 

@@ -129,25 +129,36 @@ Apple ships no public face-recognition embedding API. Three options were weighed
    general-purpose visual descriptor, so it is more sensitive to lighting and
    background than a purpose-trained face network, and needs a tightly aligned
    crop plus a per-user calibrated threshold.
-2. **A bundled third-party Core ML face network** — stronger for identity, but
-   redistribution licences differ per model and would each have to be audited.
+2. **A bundled metric-learned Core ML face network** — trained to answer "same
+   person?" directly. Far larger identity margin, at the cost of a 24 MB
+   resource and a licence to honour.
 3. **Training a network** — out of scope.
 
-Option 1 was chosen as the default, paired with an explicit
-**geometric descriptor**: the pairwise distances between twelve stable landmark
-centroids, normalised by inter-ocular distance. That half is invariant to
-brightness and scale and carries identity information the general descriptor is
-weak on. The two halves are L2-normalised separately, then weighted 0.72 / 0.28
-and concatenated, so neither can drown out the other.
+**Option 2 is the default.** `FaceDescriptorModel.mlpackage` is an
+InceptionResnetV1 (VGGFace2) converted from facenet-pytorch, whose code and
+weights are MIT licensed; provenance, SHA-256, licence notes and the exact
+conversion script are in `MODEL.md`. `CoreMLFaceEmbeddingService` loads it at
+launch with `computeUnits = .all` (Neural Engine on Apple silicon), self-tests
+it with a blank crop, and records `CoreML:FaceDescriptorModel@<version>` in
+every descriptor's `producerVersion`. A model dropped at
+`~/Library/Application Support/de.faceunlock.mac/Models/FaceDescriptorModel.mlmodelc`
+takes precedence over the bundled one.
 
-Option 2 is supported but not shipped: if a compiled `FaceEmbedding.mlmodelc` is
-found in the app bundle or in
-`~/Library/Application Support/de.faceunlock.mac/Models/`, it is used instead,
-and its identity (file name plus a SHA-256 prefix of the compiled model) becomes
-part of the descriptor's `producerVersion`. Because `producerVersion` is stored
-with every descriptor and checked before scoring, a profile enrolled with one
-pipeline can never be matched against descriptors from another — the mismatch is
-an honest rejection, not a meaningless number.
+Option 1 remains as the **fallback** (`VisionFaceEmbeddingService`) if the
+model resource is missing or fails its self-test, paired with an explicit
+**geometric descriptor**: the pairwise distances between twelve stable landmark
+centroids, normalised by inter-ocular distance. The two halves are
+L2-normalised separately, then weighted 0.72 / 0.28 and concatenated.
+
+The two pipelines score on different scales — the Vision descriptor puts
+impostors at ≈ 0.80–0.86, the face network at ≈ 0.45–0.68 — so
+`SensitivityPreset.scoreFloor(for:)` takes the descriptor source and the
+calibrator is handed the same source. Because `producerVersion` is stored with
+every descriptor and checked before scoring, a profile enrolled with one
+pipeline can never be matched against descriptors from another;
+`RecognitionCoordinator.refreshPreconditions` additionally refuses such a
+profile up front (`FaceUnlockError.profileIncompatible`) so the user is told to
+enrol again instead of seeing an endless "not recognised".
 
 ## Unlock provider chain
 

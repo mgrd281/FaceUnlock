@@ -48,6 +48,36 @@ final class RecognitionCoordinatorTests: XCTestCase {
         )
     }
 
+    // MARK: Profile compatibility
+
+    /// A profile from another descriptor pipeline is refused before any frame is
+    /// captured, and the coordinator reports "no profile" rather than looping on
+    /// "not recognised".
+    func testProfileFromAnotherPipelineIsRefusedUpFront() async {
+        let stale = Fake.profile(
+            embeddings: (1...6).map { _ in
+                FaceEmbedding(source: .visionFeaturePrint, producerVersion: "VNFeaturePrint.r2+geometry.v1",
+                              values: Fake.embedding(seed: 1).values)
+            },
+            threshold: 0.88
+        )
+        let camera = FakeCameraManager(frameCount: 30)
+        let unlock = FakeUnlockCoordinator()
+        let coordinator = makeCoordinator(camera: camera, profile: stale, unlock: unlock)
+
+        await coordinator.refreshPreconditions()
+        let status = await coordinator.status
+        XCTAssertEqual(status, .notConfigured)
+
+        let statistics = await coordinator.currentStatistics
+        XCTAssertEqual(
+            statistics.lastErrorDescription,
+            FaceUnlockError.profileIncompatible(stored: "", active: "").message
+        )
+        let attempts = await unlock.attemptCount
+        XCTAssertEqual(attempts, 0)
+    }
+
     // MARK: Happy path
 
     func testRecognisedAttemptUnlocksAndReleasesTheCamera() async {

@@ -50,6 +50,11 @@ public final class AppEnvironment {
     public private(set) var unlockCapability: SessionUnlockCapability = .unsupported
     public private(set) var statistics = RecognitionStatistics()
     public private(set) var profileSummary: BiometricProfile.Summary?
+    /// True when a profile is stored but was enrolled by a different descriptor
+    /// pipeline than the one now running. It cannot be scored; the only remedy
+    /// is to enrol again.
+    public private(set) var profileNeedsReenrollment = false
+    private var hasAnnouncedIncompatibleProfile = false
     public private(set) var lastUpdateCheck: UpdateCheckResult?
     /// Surfaced to the UI as a dismissible banner rather than a modal alert.
     public var presentedError: FaceUnlockError?
@@ -250,8 +255,24 @@ public final class AppEnvironment {
         unlockCapability = await unlockCoordinator.bestAvailableCapability()
         capabilityMirror.value = unlockCapability
         providerSummaries = await unlockCoordinator.providerSummaries()
-        profileSummary = (try? profileStore.load())?.summary
+        let storedProfile = try? profileStore.load()
+        profileSummary = storedProfile?.summary
+        refreshProfileCompatibility(storedProfile)
         compatibility = compatibilityBuilder?.makeReport()
+    }
+
+    private func refreshProfileCompatibility(_ profile: BiometricProfile?) {
+        guard let first = profile?.embeddings.first else {
+            profileNeedsReenrollment = false
+            return
+        }
+        let compatible = first.source == embedder.source && first.producerVersion == embedder.producerVersion
+        profileNeedsReenrollment = !compatible
+        if !compatible, !hasAnnouncedIncompatibleProfile {
+            hasAnnouncedIncompatibleProfile = true
+            presentedError = .profileIncompatible(stored: first.producerVersion, active: embedder.producerVersion)
+            AppLogger.recognition.notice("The stored profile predates the active recognition engine; re-enrolment required")
+        }
     }
 
     // MARK: Actions

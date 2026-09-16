@@ -175,21 +175,30 @@ xcodebuild -project FaceUnlock.xcodeproj -scheme FaceUnlock -configuration Debug
 ./Scripts/notarize.sh build/FaceUnlock-1.0.0.dmg
 ```
 
-## Optional: supplying a Core ML embedding model
+## The Core ML embedding model
 
-FaceUnlock bundles no face-recognition model, because redistributing third-party
-weights means honouring each model's licence, which has to be checked per model.
-If you have one you are licensed to use, compile it and drop it at:
+`FaceUnlock/Resources/FaceDescriptorModel.mlpackage` is committed to the
+repository and picked up by the synchronized group; Xcode compiles it to
+`FaceDescriptorModel.mlmodelc` inside the app bundle. `COREML_CODEGEN_LANGUAGE`
+is set to `None` because the app loads the model by URL rather than through a
+generated class. Provenance, licence and SHA-256 are in `MODEL.md`.
+
+To rebuild the package from the upstream weights:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install --index-url https://download.pytorch.org/whl/cpu torch
+pip install coremltools facenet-pytorch numpy pillow
+python3 Scripts/convert-face-model.py
+```
+
+To try a different model without rebuilding, compile it and drop it at:
 
 ```
-~/Library/Application Support/de.faceunlock.mac/Models/FaceEmbedding.mlmodelc
+~/Library/Application Support/de.faceunlock.mac/Models/FaceDescriptorModel.mlmodelc
 ```
 
-It must take a 160×160 BGRA image and return a single `MLMultiArray`. FaceUnlock
-detects it at launch, records its identity in the descriptor's `producerVersion`
-(file name plus a SHA-256 prefix), and uses it instead of the Vision pipeline.
-Because the `producerVersion` changes, **you must re-enrol** — profiles are never
-matched across pipelines.
-
-To bundle one instead, add it to `FaceUnlock/Resources/` and it will be picked up
-by the synchronized group automatically.
+It must take a 160×160 RGB image and return a single `MLMultiArray`. Changing
+the model changes the `producerVersion` stored in every descriptor, so **you
+must re-enrol** — profiles are never matched across pipelines, and the app
+tells you so at launch.

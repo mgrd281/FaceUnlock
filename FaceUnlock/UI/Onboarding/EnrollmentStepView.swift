@@ -218,7 +218,7 @@ struct CalibrationStepView: View {
         if model.savedProfile != nil { return .success }
         if !model.isWorking { return .idle }
         guard let latest = model.latestConfidence else { return .searching }
-        return latest >= SensitivityPreset.convenient.scoreFloor ? .aligned : .attention
+        return latest >= SensitivityPreset.convenient.scoreFloor(for: model.descriptorSource) ? .aligned : .attention
     }
 
     @ViewBuilder

@@ -139,7 +139,7 @@ public actor RecognitionCoordinator {
     /// resting status.
     public func refreshPreconditions() async {
         do {
-            cachedProfile = try profileStore.load()
+            cachedProfile = try Self.compatibleProfile(try profileStore.load(), with: embedder)
         } catch {
             cachedProfile = nil
             record(error: error as? FaceUnlockError ?? .profileCorrupted)
@@ -578,7 +578,24 @@ public actor RecognitionCoordinator {
 
     /// Replaces the cached profile after enrolment without a disk round-trip.
     public func profileDidChange(_ profile: BiometricProfile?) {
-        cachedProfile = profile
-        apply(profile == nil ? .profileRemoved : .profileBecameAvailable)
+        cachedProfile = profile.flatMap { try? Self.compatibleProfile($0, with: embedder) }
+        apply(cachedProfile == nil ? .profileRemoved : .profileBecameAvailable)
+    }
+
+    /// A profile enrolled by a different descriptor producer can never score, so
+    /// it is refused here — before any frame is captured — rather than surfacing
+    /// as an endless "not recognised". `FaceMatcher` still checks per descriptor;
+    /// this only makes the failure legible.
+    static func compatibleProfile(
+        _ profile: BiometricProfile?,
+        with embedder: any FaceEmbeddingProviding
+    ) throws -> BiometricProfile? {
+        guard let profile, let first = profile.embeddings.first else { return profile }
+        guard first.source == embedder.source, first.producerVersion == embedder.producerVersion else {
+            throw FaceUnlockError.profileIncompatible(
+                stored: first.producerVersion, active: embedder.producerVersion
+            )
+        }
+        return profile
     }
 }

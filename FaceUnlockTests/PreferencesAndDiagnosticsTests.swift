@@ -78,8 +78,14 @@ final class PreferencesAndDiagnosticsTests: XCTestCase {
     }
 
     func testPresetsAreOrderedFromStrictToPermissive() {
-        XCTAssertGreaterThan(SensitivityPreset.strict.scoreFloor, SensitivityPreset.balanced.scoreFloor)
-        XCTAssertGreaterThan(SensitivityPreset.balanced.scoreFloor, SensitivityPreset.convenient.scoreFloor)
+        for source in [FaceEmbedding.Source.visionFeaturePrint, .coreMLModel] {
+            XCTAssertGreaterThan(
+                SensitivityPreset.strict.scoreFloor(for: source), SensitivityPreset.balanced.scoreFloor(for: source)
+            )
+            XCTAssertGreaterThan(
+                SensitivityPreset.balanced.scoreFloor(for: source), SensitivityPreset.convenient.scoreFloor(for: source)
+            )
+        }
         XCTAssertGreaterThan(
             SensitivityPreset.strict.requiredConsecutiveMatches,
             SensitivityPreset.convenient.requiredConsecutiveMatches
@@ -91,7 +97,8 @@ final class PreferencesAndDiagnosticsTests: XCTestCase {
 
     /// Even the most permissive preset must stay well clear of a coin flip.
     func testEvenTheMostPermissivePresetIsNotWeak() {
-        XCTAssertGreaterThan(SensitivityPreset.convenient.scoreFloor, 0.8)
+        XCTAssertGreaterThan(SensitivityPreset.convenient.scoreFloor(for: .visionFeaturePrint), 0.8)
+        XCTAssertGreaterThan(SensitivityPreset.convenient.scoreFloor(for: .coreMLModel), 0.7)
         XCTAssertGreaterThanOrEqual(SensitivityPreset.convenient.requiredConsecutiveMatches, 3)
         XCTAssertGreaterThan(SensitivityPreset.convenient.livenessFloor, 0.5)
     }

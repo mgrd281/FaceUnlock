@@ -40,7 +40,8 @@ request**. Recognition itself never needs the network at all.
 
 ## Descriptors are still biometric data
 
-A descriptor cannot be turned back into a picture of you, but it identifies you,
+A descriptor is the 512-number output of the on-device face model (`MODEL.md`).
+It cannot be turned back into a picture of you, but it identifies you,
 so FaceUnlock treats it as a secret rather than as ordinary data: encrypted at
 rest, never logged, never exported, and destroyed together with its key when you
 choose "Forget my face".

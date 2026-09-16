@@ -88,22 +88,23 @@ When the session resigns active, FaceUnlock releases the camera immediately and
 does nothing until the session becomes active again. It never operates in another
 user's session.
 
-## 7. The descriptor is not a purpose-trained face network
+## 7. The descriptor is a 2-D face network, not Face ID
 
-The default pipeline is `VNGenerateImageFeaturePrintRequest` — a general-purpose
-image descriptor — combined with a landmark-geometry descriptor. This is public,
-on-device, requires no bundled model and carries no licence obligations, but it
-is less discriminative than a metric-learned face embedding. It is compensated
-for with tight alignment, a per-user calibrated threshold, top-k aggregation and
-a consecutive-frame requirement, but the underlying limit remains.
+The default descriptor is a metric-learned InceptionResnetV1 (VGGFace2) running
+on-device through Core ML (`MODEL.md`). It is a strong 2-D identity model, but
+it sees only a colour image: there is no depth map, no infrared, no Secure
+Enclave and no attention detection. Identical twins and very close siblings can
+score inside the genuine band, and heavy occlusion (mask, hand) or extreme
+lighting still fails honestly rather than guessing.
 
-**Mitigation available to you.** Drop a compiled Core ML face embedding model at
-`~/Library/Application Support/de.faceunlock.mac/Models/FaceEmbedding.mlmodelc`
-(160×160 BGRA input, single `MLMultiArray` output) and FaceUnlock uses it
-instead. No model is bundled, because redistributing third-party weights means
-honouring each model's licence, which has to be checked per model rather than
-assumed. Changing the model changes the stored `producerVersion`, so you must
-re-enrol; profiles are never matched across pipelines.
+If the model resource is missing or fails its launch self-test, the app falls
+back to `VNGenerateImageFeaturePrintRequest` plus landmark geometry, which is
+noticeably less discriminative; Diagnostics › Engine shows which pipeline is
+active. A replacement model can be dropped at
+`~/Library/Application Support/de.faceunlock.mac/Models/FaceDescriptorModel.mlmodelc`
+(160×160 RGB input, single `MLMultiArray` output). Changing the model changes
+the stored `producerVersion`, so you must re-enrol; profiles are never matched
+across pipelines.
 
 ## 8. Liveness is software-only
 

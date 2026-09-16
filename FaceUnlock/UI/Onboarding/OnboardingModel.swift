@@ -81,6 +81,9 @@ public final class OnboardingModel {
     }
 
     public var latestConfidence: Double? { calibrationScores.last }
+    /// Which descriptor pipeline is active; thresholds and the scanner colouring
+    /// depend on it because the two pipelines score on different scales.
+    public var descriptorSource: FaceEmbedding.Source { environment.embedder.source }
 
     // MARK: Navigation
 

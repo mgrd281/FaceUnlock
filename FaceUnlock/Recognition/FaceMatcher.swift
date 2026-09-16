@@ -101,9 +101,10 @@ public enum ThresholdCalibrator {
 
     public static func calibrate(
         genuineScores: [Double],
-        preset: SensitivityPreset
+        preset: SensitivityPreset,
+        source: FaceEmbedding.Source
     ) -> Outcome {
-        let floor = preset.scoreFloor
+        let floor = preset.scoreFloor(for: source)
         guard genuineScores.count >= minimumSamples else {
             return Outcome(
                 threshold: floor,

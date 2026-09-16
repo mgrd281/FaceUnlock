@@ -93,30 +93,46 @@ final class FaceMatcherTests: XCTestCase {
         // Wildly inconsistent scores would push mean - sigma*sd very low.
         let scores = [0.99, 0.5, 0.99, 0.4, 0.98, 0.45, 0.97, 0.42, 0.96, 0.5]
         for preset in SensitivityPreset.allCases {
-            let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: preset)
-            XCTAssertGreaterThanOrEqual(outcome.threshold, preset.scoreFloor)
+            let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: preset, source: .synthetic)
+            XCTAssertGreaterThanOrEqual(outcome.threshold, preset.scoreFloor(for: .synthetic))
             XCTAssertTrue(outcome.clampedToFloor)
         }
     }
 
     func testTightlyClusteredScoresRaiseTheThreshold() {
         let scores = Array(repeating: 0.985, count: 12)
-        let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced)
-        XCTAssertGreaterThan(outcome.threshold, SensitivityPreset.balanced.scoreFloor)
+        let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced, source: .synthetic)
+        XCTAssertGreaterThan(outcome.threshold, SensitivityPreset.balanced.scoreFloor(for: .synthetic))
         XCTAssertLessThanOrEqual(outcome.threshold, ThresholdCalibrator.maximumThreshold)
         XCTAssertFalse(outcome.clampedToFloor)
     }
 
+    /// The metric-learned model scores on a lower scale, so its floors are lower
+    /// in absolute terms — but they must still sit well above the published
+    /// impostor operating point (score ≈ 0.70) and never above the Vision floors.
+    func testCoreMLFloorsAreLowerButStillAboveTheImpostorBand() {
+        for preset in SensitivityPreset.allCases {
+            let coreML = preset.scoreFloor(for: .coreMLModel)
+            let vision = preset.scoreFloor(for: .visionFeaturePrint)
+            XCTAssertGreaterThanOrEqual(coreML, 0.70, "\(preset) floor is inside the impostor band")
+            XCTAssertLessThan(coreML, vision)
+        }
+        let scores = Array(repeating: 0.86, count: 12)
+        let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced, source: .coreMLModel)
+        XCTAssertGreaterThan(outcome.threshold, SensitivityPreset.balanced.scoreFloor(for: .coreMLModel))
+        XCTAssertLessThanOrEqual(outcome.threshold, ThresholdCalibrator.maximumThreshold)
+    }
+
     func testTooFewSamplesFallsBackToTheFloor() {
-        let outcome = ThresholdCalibrator.calibrate(genuineScores: [0.99, 0.99], preset: .strict)
-        XCTAssertEqual(outcome.threshold, SensitivityPreset.strict.scoreFloor)
+        let outcome = ThresholdCalibrator.calibrate(genuineScores: [0.99, 0.99], preset: .strict, source: .synthetic)
+        XCTAssertEqual(outcome.threshold, SensitivityPreset.strict.scoreFloor(for: .synthetic))
         XCTAssertTrue(outcome.clampedToFloor)
     }
 
     func testStricterPresetsNeverProduceLowerThresholds() {
         let scores = Array(repeating: 0.97, count: 15)
         let strict = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .strict).threshold
-        let balanced = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced).threshold
+        let balanced = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced, source: .synthetic).threshold
         let convenient = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .convenient).threshold
         XCTAssertGreaterThanOrEqual(strict, balanced)
         XCTAssertGreaterThanOrEqual(balanced, convenient)

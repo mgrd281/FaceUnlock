@@ -1,0 +1,14 @@
+{
+  "name": "FaceDescriptorModel",
+  "version": "1.0.0",
+  "weights": "20180402-114759-vggface2",
+  "source": "https://github.com/timesler/facenet-pytorch",
+  "license": "MIT",
+  "input": "160x160 RGB, normalisation folded in",
+  "output": "512-d L2-normalised float embedding",
+  "quantized": true,
+  "size_bytes": 23852206,
+  "sha256": "c7cdb426701e9b5fe4ea34fdba84e07a4776848ddf2dd6b92d695d05ff9dfa08",
+  "torch": "2.2.2+cu121",
+  "coremltools": "9.0"
+}

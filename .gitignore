@@ -17,6 +17,8 @@ xcuserdata/
 *.dmg
 ExportOptions.plist
 
-# Optional, user-supplied Core ML model (never commit third-party weights)
+# Compiled Core ML output and loose .mlmodel files. The bundled
+# FaceUnlock/Resources/FaceDescriptorModel.mlpackage *is* committed (see MODEL.md).
 FaceUnlock/Resources/*.mlmodelc/
 FaceUnlock/Resources/*.mlmodel
+.venv/

@@ -13,6 +13,10 @@ public enum FaceUnlockError: Error, Equatable, Sendable {
     case accessibilityPermissionRequired
     case noEnrolledProfile
     case profileCorrupted
+    /// The stored profile was enrolled with a different descriptor pipeline
+    /// (for example before the Core ML model was added). It is intact but can
+    /// never be scored, so it has to be set up again.
+    case profileIncompatible(stored: String, active: String)
     case enrollmentIncomplete(capturedSamples: Int, requiredSamples: Int)
     case enrollmentQualityTooLow(String)
     case recognitionConfidenceTooLow(score: Double, threshold: Double)
@@ -46,6 +50,8 @@ public enum FaceUnlockError: Error, Equatable, Sendable {
             return "No face is set up yet. Run the setup assistant to enroll your face."
         case .profileCorrupted:
             return "The stored face profile could not be read and has to be set up again."
+        case .profileIncompatible:
+            return "The recognition engine was updated. Your face has to be set up again."
         case let .enrollmentIncomplete(captured, required):
             return "Setup is not finished — \(captured) of \(required) samples were captured."
         case let .enrollmentQualityTooLow(reason):
@@ -88,7 +94,7 @@ public enum FaceUnlockError: Error, Equatable, Sendable {
             return "Open System Settings › Privacy & Security › Accessibility and enable FaceUnlock."
         case .cameraBusy:
             return "Quit the other app that is using the camera, then try again."
-        case .noEnrolledProfile, .profileCorrupted, .enrollmentIncomplete, .enrollmentQualityTooLow:
+        case .noEnrolledProfile, .profileCorrupted, .profileIncompatible, .enrollmentIncomplete, .enrollmentQualityTooLow:
             return "Open the setup assistant to set up your face again."
         case .recognitionConfidenceTooLow, .livenessFailed:
             return "Face the camera directly in even lighting and try again."
@@ -114,6 +120,8 @@ public enum FaceUnlockError: Error, Equatable, Sendable {
             return String(format: "score %.4f < threshold %.4f", score, threshold)
         case let .livenessFailed(reason): return reason
         case let .enrollmentQualityTooLow(reason): return reason
+        case let .profileIncompatible(stored, active):
+            return "profile producer \(stored), active producer \(active)"
         default: return nil
         }
     }
@@ -128,6 +136,7 @@ public enum FaceUnlockError: Error, Equatable, Sendable {
         case .accessibilityPermissionRequired: return "permission.accessibility"
         case .noEnrolledProfile: return "profile.missing"
         case .profileCorrupted: return "profile.corrupt"
+        case .profileIncompatible: return "profile.incompatible"
         case .enrollmentIncomplete: return "enroll.incomplete"
         case .enrollmentQualityTooLow: return "enroll.quality"
         case .recognitionConfidenceTooLow: return "recognition.low"

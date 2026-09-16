@@ -127,7 +127,9 @@ Settings instead of nagging.
 ## Privacy
 
 - Camera frames are analysed in memory and discarded. None are written to disk.
-- Recognition runs on-device (Vision / Core ML, Neural Engine where available).
+- Recognition runs on-device: a bundled, MIT-licensed FaceNet-style Core ML
+  model (`MODEL.md`) on the Neural Engine where available, with Vision as the
+  fallback. No model weights are ever downloaded.
 - No biometric data, password or telemetry ever leaves the Mac.
 - No cloud account, no face database, no advertising or analytics SDK is linked
   into the app at all.

@@ -262,7 +262,7 @@ public actor EnrollmentCoordinator {
             updatedAt: Date(),
             embeddings: draft.embeddings,
             poseTags: draft.poseTags,
-            recognitionThreshold: sensitivity.scoreFloor,
+            recognitionThreshold: sensitivity.scoreFloor(for: embedder.source),
             metric: .cosine,
             livenessConfiguration: .init(
                 mode: livenessMode,
@@ -301,7 +301,9 @@ public actor EnrollmentCoordinator {
             )
         }
 
-        let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: sensitivity)
+        let outcome = ThresholdCalibrator.calibrate(
+            genuineScores: scores, preset: sensitivity, source: embedder.source
+        )
         AppLogger.recognition.notice(
             """
             Calibration complete: samples=\(outcome.sampleCount, privacy: .public) \
