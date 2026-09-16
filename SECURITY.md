@@ -63,8 +63,8 @@ All three use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and
 The data-protection keychain is only open to code with an application
 identifier — a build signed with a development team or a Developer ID. An
 **ad-hoc signed build** (Xcode with no team selected, as in a fresh clone) gets
-`errSecMissingEntitlement` (−34018) on every call. `KeychainService` probes
-this once at launch and, only then, uses the user's **login keychain** instead:
+`errSecMissingEntitlement` (−34018) on every call. The first call that hits that status switches `KeychainService`, for the
+rest of the process and only then, to the user's **login keychain**:
 still the Keychain, still encrypted at rest and ACL-bound to the app, but
 without the per-item accessibility class. The fallback is logged, shown as
 "Keychain: login keychain (ad-hoc build)" in Diagnostics, and never chosen for

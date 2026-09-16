@@ -46,9 +46,9 @@ public enum KeychainItem: String, CaseIterable, Sendable {
 ///   The data-protection keychain is only available to code that carries an
 ///   application identifier, i.e. a build signed with a development team or a
 ///   Developer ID. An ad-hoc signed build (Xcode with no team selected) gets
-///   `errSecMissingEntitlement` (−34018) for every call, so the service probes
-///   once at start-up and, only in that case, falls back to the user's login
-///   keychain. The fallback is logged and shown in Diagnostics; it is still the
+///   `errSecMissingEntitlement` (−34018). The first call that hits that status
+///   switches the service — for the rest of the process, and only in that
+///   case — to the user's login keychain. The fallback is logged and shown in Diagnostics; it is still the
 ///   Keychain — encrypted at rest, ACL-bound to this app — just without the
 ///   per-item accessibility class. See SECURITY.md.
 /// * `kSecAttrSynchronizable` is explicitly false: biometric material and account
@@ -60,43 +60,27 @@ public struct KeychainService: KeychainServicing {
 
     private let service: String
     private let accessGroup: String?
-    /// True when the data-protection keychain accepted the probe.
-    public let usesDataProtectionKeychain: Bool
+    /// Flips to false the first time the data-protection keychain answers
+    /// `errSecMissingEntitlement`; every later call goes to the login keychain.
+    /// Shared by copies of this value type so the decision is made once.
+    private let dataProtectionAvailable = Atomic<Bool>(true)
 
     public init(service: String = "de.faceunlock.mac", accessGroup: String? = nil) {
         self.service = service
         self.accessGroup = accessGroup
-        self.usesDataProtectionKeychain = Self.probeDataProtectionKeychain(service: service)
-        if !usesDataProtectionKeychain {
-            AppLogger.keychain.notice(
-                "Data-protection keychain unavailable (unsigned or ad-hoc build); using the login keychain"
-            )
-        }
     }
 
-    /// Asks the data-protection keychain for an item that does not exist. "Not
-    /// found" means the keychain is reachable; "missing entitlement" means this
-    /// binary cannot use it at all. Anything else is treated as reachable so a
-    /// transient error does not silently downgrade the storage class.
-    private static func probeDataProtectionKeychain(service: String) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: "probe.\(UUID().uuidString)",
-            kSecUseDataProtectionKeychain as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        return SecItemCopyMatching(query as CFDictionary, nil) != missingEntitlementStatus
-    }
+    /// True while the data-protection keychain is being used.
+    public var usesDataProtectionKeychain: Bool { dataProtectionAvailable.value }
 
-    private func baseQuery(for item: KeychainItem) -> [String: Any] {
+    private func baseQuery(for item: KeychainItem, dataProtection: Bool) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: item.account,
             kSecAttrSynchronizable as String: false
         ]
-        if usesDataProtectionKeychain {
+        if dataProtection {
             query[kSecUseDataProtectionKeychain as String] = true
         }
         if let accessGroup {
@@ -105,42 +89,53 @@ public struct KeychainService: KeychainServicing {
         return query
     }
 
-    public func setData(_ data: Data, for item: KeychainItem) throws {
-        var query = baseQuery(for: item)
-        var attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrLabel as String: item.label
-        ]
-        // Accessibility classes are a data-protection concept; the file-based
-        // login keychain rejects or ignores them depending on the OS release.
-        if usesDataProtectionKeychain {
-            attributes[kSecAttrAccessible as String] = item.accessibility
-        }
+    /// Runs `operation` against the data-protection keychain and, only when it
+    /// answers `errSecMissingEntitlement`, once more against the login keychain.
+    /// The downgrade sticks for the life of the process and is logged; no other
+    /// status ever triggers it.
+    private func withKeychain(_ operation: (_ dataProtection: Bool) -> OSStatus) -> OSStatus {
+        guard dataProtectionAvailable.value else { return operation(false) }
+        let status = operation(true)
+        guard status == Self.missingEntitlementStatus else { return status }
+        dataProtectionAvailable.value = false
+        AppLogger.keychain.notice(
+            "Data-protection keychain unavailable (unsigned or ad-hoc build); using the login keychain"
+        )
+        return operation(false)
+    }
 
-        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        switch updateStatus {
-        case errSecSuccess:
-            return
-        case errSecItemNotFound:
-            query.merge(attributes) { _, new in new }
-            let addStatus = SecItemAdd(query as CFDictionary, nil)
-            guard addStatus == errSecSuccess else {
-                AppLogger.keychain.error("Keychain add failed (status \(addStatus, privacy: .public))")
-                throw FaceUnlockError.keychainFailure(status: addStatus)
+    public func setData(_ data: Data, for item: KeychainItem) throws {
+        let status = withKeychain { dataProtection in
+            var query = baseQuery(for: item, dataProtection: dataProtection)
+            var attributes: [String: Any] = [
+                kSecValueData as String: data,
+                kSecAttrLabel as String: item.label
+            ]
+            // Accessibility classes are a data-protection concept; the file-based
+            // login keychain rejects or ignores them depending on the OS release.
+            if dataProtection {
+                attributes[kSecAttrAccessible as String] = item.accessibility
             }
-        default:
-            AppLogger.keychain.error("Keychain update failed (status \(updateStatus, privacy: .public))")
-            throw FaceUnlockError.keychainFailure(status: updateStatus)
+            let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            guard updateStatus == errSecItemNotFound else { return updateStatus }
+            query.merge(attributes) { _, new in new }
+            return SecItemAdd(query as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else {
+            AppLogger.keychain.error("Keychain write failed (status \(status, privacy: .public))")
+            throw FaceUnlockError.keychainFailure(status: status)
         }
     }
 
     public func data(for item: KeychainItem) throws -> Data? {
-        var query = baseQuery(for: item)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = withKeychain { dataProtection in
+            var query = baseQuery(for: item, dataProtection: dataProtection)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            result = nil
+            return SecItemCopyMatching(query as CFDictionary, &result)
+        }
         switch status {
         case errSecSuccess:
             return result as? Data
@@ -153,7 +148,9 @@ public struct KeychainService: KeychainServicing {
     }
 
     public func removeItem(_ item: KeychainItem) throws {
-        let status = SecItemDelete(baseQuery(for: item) as CFDictionary)
+        let status = withKeychain { dataProtection in
+            SecItemDelete(baseQuery(for: item, dataProtection: dataProtection) as CFDictionary)
+        }
         guard status == errSecSuccess || status == errSecItemNotFound else {
             AppLogger.keychain.error("Keychain delete failed (status \(status, privacy: .public))")
             throw FaceUnlockError.keychainFailure(status: status)
@@ -161,10 +158,12 @@ public struct KeychainService: KeychainServicing {
     }
 
     public func containsItem(_ item: KeychainItem) throws -> Bool {
-        var query = baseQuery(for: item)
-        query[kSecReturnData as String] = false
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        let status = withKeychain { dataProtection in
+            var query = baseQuery(for: item, dataProtection: dataProtection)
+            query[kSecReturnData as String] = false
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            return SecItemCopyMatching(query as CFDictionary, nil)
+        }
         switch status {
         case errSecSuccess: return true
         case errSecItemNotFound: return false
