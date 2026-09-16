@@ -150,6 +150,24 @@ preference that can promote a less safe provider.
 honestly throughout the UI. Nothing claims `supported` for a workflow macOS does
 not permit.
 
+## The notch panel
+
+`NotchPanelController` owns one borderless `NSPanel` that hangs from the top
+edge of the screen, flush with the camera housing on Macs that have one
+(`NSScreen.safeAreaInsets` / `auxiliaryTopLeftArea` give its geometry; on other
+Macs it hangs from the top edge). It is black with rounded bottom corners, forced
+to the dark appearance, and tinted green.
+
+One panel, one occupant at a time, with a priority order: the setup assistant and
+the recognition test are foreground clients the user opened deliberately; the
+recognition overlay (`RecognitionOverlayView`, driven by `AppEnvironment` from
+status changes) is a background client that only fills the panel when it is
+otherwise unused and can never displace the others.
+
+Because the lock screen and screen saver cover every user-session window, the
+overlay is in practice visible during a recognition test, during the pre-lock
+presence check, and for the two seconds after a successful unlock.
+
 ## Power behaviour
 
 - The `AVCaptureSession` is created on demand and fully torn down in `stop()` —

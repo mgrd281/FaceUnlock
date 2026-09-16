@@ -62,7 +62,12 @@ public struct RecognitionIndicator: View {
     }
 }
 
-/// A floating panel shown near the menu bar during an unlock attempt.
+/// The recognition indicator shown in the notch panel during an attempt.
+///
+/// It is only ever visible while the session itself is visible — the lock screen
+/// and the screen saver cover it — so in practice it appears during a
+/// recognition test, during the pre-lock presence check, and for the two seconds
+/// after a successful unlock, where it reads as a small "welcome back".
 public struct RecognitionOverlayView: View {
     @Environment(AppEnvironment.self) private var environment
 
@@ -71,11 +76,14 @@ public struct RecognitionOverlayView: View {
     public var body: some View {
         HStack(spacing: Design.Spacing.medium) {
             RecognitionIndicator(status: environment.status)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("FaceUnlock").font(.headline)
-                Text(StatusPresenter.headline(for: environment.status))
-                    .font(.callout)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("FaceUnlock")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
+                Text(StatusPresenter.headline(for: environment.status))
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let challenge = environment.progress.activeChallenge {
                     Label(challenge.prompt, systemImage: challenge.symbolName)
                         .font(.callout.weight(.medium))
@@ -84,8 +92,9 @@ public struct RecognitionOverlayView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(Design.Spacing.medium)
-        .frame(width: 300)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Design.Radius.window))
+        .padding(.horizontal, Design.Spacing.large)
+        .padding(.top, Design.Spacing.section)
+        .padding(.bottom, Design.Spacing.large)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }

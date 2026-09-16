@@ -3,22 +3,28 @@ import SwiftUI
 /// Guided face capture, presented as a Face ID–style scanner.
 struct EnrollmentStepView: View {
     @Bindable var model: OnboardingModel
+    @Environment(\.notchPresentation) private var inNotch
 
     private var update: EnrollmentUpdate? { model.enrollmentUpdate }
+    private var accent: Color { inNotch ? .green : .accentColor }
 
     var body: some View {
-        VStack(spacing: Design.Spacing.large) {
-            StepHeader(
-                symbolName: "faceid",
-                title: "Set up your face",
-                subtitle: "Move your head slowly as the ring fills. Nothing is photographed — each sample becomes a mathematical descriptor and the frame is discarded."
-            )
+        VStack(spacing: inNotch ? Design.Spacing.medium : Design.Spacing.large) {
+            if !inNotch {
+                StepHeader(
+                    symbolName: "faceid",
+                    title: "Set up your face",
+                    subtitle: "Move your head slowly as the ring fills. Nothing is photographed — each sample becomes a mathematical descriptor and the frame is discarded."
+                )
+            }
 
             FaceScannerView(
                 image: model.previewImage,
                 progress: update?.progress ?? 0,
                 cue: cue,
-                status: scannerStatus
+                status: scannerStatus,
+                diameter: inNotch ? 200 : 220,
+                accent: accent
             )
 
             VStack(spacing: 4) {
@@ -33,7 +39,11 @@ struct EnrollmentStepView: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.updatesFrequently)
 
-            PoseChips(capturedByStep: update?.capturedByStep ?? [:], current: update?.currentStep)
+            PoseChips(
+                capturedByStep: update?.capturedByStep ?? [:],
+                current: update?.currentStep,
+                accent: accent
+            )
 
             controls
         }
@@ -103,20 +113,25 @@ struct EnrollmentStepView: View {
 /// Calibration, on the same scanner: the ring fills as genuine samples arrive.
 struct CalibrationStepView: View {
     @Bindable var model: OnboardingModel
+    @Environment(\.notchPresentation) private var inNotch
 
     var body: some View {
-        VStack(spacing: Design.Spacing.large) {
-            StepHeader(
-                symbolName: "waveform.path.ecg",
-                title: "Calibrating",
-                subtitle: "FaceUnlock measures how consistently it recognises you and sets your personal threshold from that. Calibration can only make recognition stricter than the preset — never more permissive."
-            )
+        VStack(spacing: inNotch ? Design.Spacing.medium : Design.Spacing.large) {
+            if !inNotch {
+                StepHeader(
+                    symbolName: "waveform.path.ecg",
+                    title: "Calibrating",
+                    subtitle: "FaceUnlock measures how consistently it recognises you and sets your personal threshold from that. Calibration can only make recognition stricter than the preset — never more permissive."
+                )
+            }
 
             FaceScannerView(
                 image: model.previewImage,
                 progress: model.calibrationProgress,
                 cue: model.isWorking ? .center : nil,
-                status: scannerStatus
+                status: scannerStatus,
+                diameter: inNotch ? 200 : 220,
+                accent: inNotch ? .green : .accentColor
             )
 
             VStack(spacing: 4) {

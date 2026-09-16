@@ -8,17 +8,19 @@ struct StepHeader: View {
     let subtitle: String
     var tint: Color = .accentColor
 
+    @Environment(\.notchPresentation) private var inNotch
+
     var body: some View {
-        VStack(spacing: Design.Spacing.small) {
+        VStack(spacing: inNotch ? 6 : Design.Spacing.small) {
             Image(systemName: symbolName)
-                .font(.system(size: 36, weight: .medium))
+                .font(.system(size: inNotch ? 28 : 36, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(tint)
+                .foregroundStyle(inNotch ? Color.green : tint)
                 .accessibilityHidden(true)
             Text(title)
-                .font(.system(.title, design: .rounded, weight: .semibold))
+                .font(.system(inNotch ? .title2 : .title, design: .rounded, weight: .semibold))
             Text(subtitle)
-                .font(.callout)
+                .font(inNotch ? .subheadline : .callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -26,6 +28,26 @@ struct StepHeader: View {
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The page dots in the notch panel's footer.
+struct StepDots: View {
+    let current: OnboardingModel.Step
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(OnboardingModel.Step.allCases) { step in
+                Circle()
+                    .fill(step == current ? Color.green : Color.white.opacity(0.28))
+                    .frame(width: step == current ? 7 : 6, height: step == current ? 7 : 6)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: current)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Setup step \(current.rawValue + 1) of \(OnboardingModel.Step.allCases.count): \(current.title)"
+        )
     }
 }
 

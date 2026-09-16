@@ -187,7 +187,23 @@ public final class AppEnvironment {
             for await update in await self.recognitionCoordinator.progressUpdates() {
                 self.progress = update
                 self.status = update.status
+                self.syncRecognitionOverlay()
             }
+        }
+    }
+
+    /// Shows the notch indicator while an attempt is active and hides it once the
+    /// coordinator settles. A user-opened panel (assistant, test) always wins.
+    private func syncRecognitionOverlay() {
+        guard preferences.showRecognitionAnimation else {
+            windows.dismissRecognitionOverlay()
+            return
+        }
+        switch status {
+        case .monitoring, .faceDetected, .recognizing, .recognized, .unlockAttempt, .unlocked, .rejected:
+            windows.showRecognitionOverlay()
+        default:
+            windows.dismissRecognitionOverlay()
         }
     }
 

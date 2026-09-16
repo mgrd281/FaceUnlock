@@ -51,6 +51,7 @@ public struct FaceScannerView: View {
     private let cue: Cue?
     private let status: Status
     private let diameter: CGFloat
+    private let accent: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
@@ -64,13 +65,15 @@ public struct FaceScannerView: View {
         progress: Double,
         cue: Cue?,
         status: Status,
-        diameter: CGFloat = 220
+        diameter: CGFloat = 220,
+        accent: Color = .accentColor
     ) {
         self.image = image
         self.progress = min(1, max(0, progress))
         self.cue = cue
         self.status = status
         self.diameter = diameter
+        self.accent = accent
     }
 
     public var body: some View {
@@ -117,7 +120,7 @@ public struct FaceScannerView: View {
             // o'clock, so the rotation places the arc's midpoint at `cue.angle`.
             Circle()
                 .trim(from: 0, to: 0.14)
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                .stroke(accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                 .frame(width: ringRadius * 2, height: ringRadius * 2)
                 .rotationEffect(.degrees(cue.angle - 0.07 * 360))
                 .blur(radius: 2)
@@ -126,7 +129,7 @@ public struct FaceScannerView: View {
 
             Image(systemName: cue.symbolName)
                 .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(accent)
                 .offset(
                     x: cos(cue.angle * .pi / 180) * (ringRadius + 34),
                     y: sin(cue.angle * .pi / 180) * (ringRadius + 34)
@@ -135,7 +138,7 @@ public struct FaceScannerView: View {
                 .animation(pulseAnimation, value: pulse)
         } else if cue == .center {
             Circle()
-                .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 2)
+                .strokeBorder(accent.opacity(0.7), lineWidth: 2)
                 .frame(width: diameter + 14, height: diameter + 14)
                 .opacity(pulseOpacity)
                 .animation(pulseAnimation, value: pulse)
@@ -175,7 +178,7 @@ public struct FaceScannerView: View {
     private var statusColor: Color {
         switch status {
         case .idle: return .secondary
-        case .searching: return .accentColor
+        case .searching: return accent
         case .aligned, .success: return .green
         case .attention, .failure: return .orange
         }
@@ -207,6 +210,7 @@ public struct FaceScannerView: View {
 struct PoseChips: View {
     let capturedByStep: [EnrollmentPose: Int]
     let current: EnrollmentPose?
+    var accent: Color = .accentColor
 
     var body: some View {
         HStack(spacing: Design.Spacing.small) {
@@ -223,15 +227,15 @@ struct PoseChips: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .foregroundStyle(isDone ? Color.green : (isCurrent ? Color.accentColor : Color.secondary))
+                .foregroundStyle(isDone ? Color.green : (isCurrent ? accent : Color.secondary))
                 .background(
                     Capsule().fill(
                         isDone ? Color.green.opacity(0.12)
-                            : (isCurrent ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
+                            : (isCurrent ? accent.opacity(0.14) : Color.secondary.opacity(0.10))
                     )
                 )
                 .overlay(
-                    Capsule().strokeBorder(isCurrent ? Color.accentColor.opacity(0.6) : .clear, lineWidth: 1)
+                    Capsule().strokeBorder(isCurrent ? accent.opacity(0.6) : .clear, lineWidth: 1)
                 )
                 .fixedSize()
                 .accessibilityElement(children: .ignore)

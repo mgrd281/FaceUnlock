@@ -10,23 +10,26 @@ public struct RecognitionTestView: View {
     @State private var result: RecognitionAttemptResult?
     @State private var isRunning = false
     @State private var runTask: Task<Void, Never>?
+    @Environment(\.notchPresentation) private var inNotch
 
     public init() {}
 
     public var body: some View {
         ScrollView {
-            VStack(spacing: Design.Spacing.large) {
+            VStack(spacing: inNotch ? Design.Spacing.medium : Design.Spacing.large) {
                 StepHeader(
                     symbolName: "viewfinder",
                     title: "Test face recognition",
-                    subtitle: "Nothing is unlocked by this test. It runs exactly the same pipeline a real attempt uses and reports what it found."
+                    subtitle: "Nothing is unlocked by this test. It runs the same pipeline a real attempt uses and reports what it found."
                 )
 
                 FaceScannerView(
                     image: environment.progress.preview?.image,
                     progress: matchProgress,
                     cue: cue,
-                    status: scannerStatus
+                    status: scannerStatus,
+                    diameter: inNotch ? 200 : 220,
+                    accent: inNotch ? .green : .accentColor
                 )
 
                 VStack(spacing: 4) {
@@ -51,10 +54,10 @@ public struct RecognitionTestView: View {
 
                 controls
             }
-            .padding(Design.Spacing.section)
+            .padding(inNotch ? Design.Spacing.large : Design.Spacing.section)
             .frame(maxWidth: .infinity)
         }
-        .frame(minWidth: 720, minHeight: 700)
+        .frame(minWidth: inNotch ? 0 : 720, minHeight: inNotch ? 0 : 700)
         .onDisappear { stop() }
     }
 
