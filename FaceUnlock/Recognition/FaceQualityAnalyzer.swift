@@ -29,10 +29,12 @@ public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendabl
         public var minimumLandmarkConfidence: Double = 0.45
         public var maximumMotion: Double = 0.16
         // Limits are in `LandmarkPoseEstimator` units. Yaw is an angle estimate
-        // (0.70 ≈ 40°, beyond which the far eye's landmarks stop being reliable);
-        // pitch is a scaled nose-drop proxy rather than a true angle.
+        // (0.70 ≈ 40°, beyond which the far eye's landmarks stop being reliable).
+        // Pitch is a raw nose-drop proxy with no universal zero, so it gets only
+        // a sanity ceiling: a drop this large is not a face, it is a landmark
+        // failure. Real tilts are judged relative to the user's own baseline.
         public var maximumAbsoluteYaw: Double = 0.70
-        public var maximumAbsolutePitch: Double = 0.60
+        public var maximumAbsolutePitch: Double = 1.6
         public var maximumAbsoluteRoll: Double = 0.45
 
         public init() {}

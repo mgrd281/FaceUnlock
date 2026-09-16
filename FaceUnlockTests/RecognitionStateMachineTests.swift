@@ -169,7 +169,7 @@ final class EnrollmentPoseTests: XCTestCase {
 
     func testDirectionalPosesRequireAMeaningfulLean() {
         for pose in EnrollmentPose.allCases where pose.axis != .none {
-            XCTAssertGreaterThan(pose.minimumLean, 0.1, "\(pose) should need a real turn")
+            XCTAssertGreaterThanOrEqual(pose.minimumLean, 0.1, "\(pose) should need a real turn")
             // Well inside the quality gate's own limits, so an accepted frame is
             // never one the analyser would have rejected as an extreme pose.
             XCTAssertLessThan(pose.minimumLean, 0.5)

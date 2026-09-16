@@ -10,13 +10,16 @@ final class LandmarkPoseEstimatorTests: XCTestCase {
     private let rightEye = CGPoint(x: 0.65, y: 0.60)
     private var frontalNose: CGPoint { CGPoint(x: 0.50, y: 0.60 - 0.65 * 0.30) }
 
-    func testFrontalFaceIsNearZero() throws {
+    func testFrontalFaceHasZeroYawAndRollAndItsOwnDrop() throws {
         let pose = try XCTUnwrap(LandmarkPoseEstimator.estimate(
             leftEye: leftEye, rightEye: rightEye, nose: frontalNose
         ))
         XCTAssertEqual(pose.yaw, 0, accuracy: 0.02)
-        XCTAssertEqual(pose.pitch, 0, accuracy: 0.05)
         XCTAssertEqual(pose.roll, 0, accuracy: 0.001)
+        // Pitch is the raw nose drop in inter-ocular units — this face's own
+        // value, not a number centred on an assumed norm.
+        XCTAssertEqual(pose.pitch, 0.65, accuracy: 0.02)
+        XCTAssertLessThanOrEqual(abs(pose.yaw), EnrollmentPose.straight.centredYawTolerance)
     }
 
     func testNoseSlidingSidewaysReadsAsYaw() throws {
@@ -25,7 +28,7 @@ final class LandmarkPoseEstimatorTests: XCTestCase {
             leftEye: leftEye, rightEye: rightEye, nose: turned
         ))
         XCTAssertGreaterThan(pose.yaw, EnrollmentPose.left.minimumLean)
-        XCTAssertEqual(pose.pitch, 0, accuracy: 0.05)
+        XCTAssertEqual(pose.pitch, 0.65, accuracy: 0.05, "a pure turn leaves the drop alone")
 
         let other = CGPoint(x: frontalNose.x - 0.06, y: frontalNose.y)
         let opposite = try XCTUnwrap(LandmarkPoseEstimator.estimate(
@@ -37,10 +40,16 @@ final class LandmarkPoseEstimatorTests: XCTestCase {
     func testNoseRisingOrDroppingReadsAsPitch() throws {
         let up = CGPoint(x: frontalNose.x, y: frontalNose.y + 0.04)
         let down = CGPoint(x: frontalNose.x, y: frontalNose.y - 0.04)
+        let level = try XCTUnwrap(LandmarkPoseEstimator.estimate(leftEye: leftEye, rightEye: rightEye, nose: frontalNose))
         let upPose = try XCTUnwrap(LandmarkPoseEstimator.estimate(leftEye: leftEye, rightEye: rightEye, nose: up))
         let downPose = try XCTUnwrap(LandmarkPoseEstimator.estimate(leftEye: leftEye, rightEye: rightEye, nose: down))
-        XCTAssertGreaterThan(abs(upPose.pitch - downPose.pitch), EnrollmentPose.up.minimumLean)
-        XCTAssertNotEqual(upPose.pitch < 0, downPose.pitch < 0, "up and down must have opposite signs")
+        // Judged the way enrolment judges it: relative to the level baseline.
+        XCTAssertGreaterThanOrEqual(abs(upPose.pitch - level.pitch), EnrollmentPose.up.minimumLean)
+        XCTAssertGreaterThanOrEqual(abs(downPose.pitch - level.pitch), EnrollmentPose.down.minimumLean)
+        XCTAssertNotEqual(
+            upPose.pitch - level.pitch < 0, downPose.pitch - level.pitch < 0,
+            "up and down must move the drop in opposite directions"
+        )
         XCTAssertEqual(upPose.yaw, 0, accuracy: 0.02)
     }
 
@@ -58,7 +67,7 @@ final class LandmarkPoseEstimatorTests: XCTestCase {
         ))
         XCTAssertEqual(pose.roll, angle, accuracy: 0.01)
         XCTAssertEqual(pose.yaw, 0, accuracy: 0.03)
-        XCTAssertEqual(pose.pitch, 0, accuracy: 0.06)
+        XCTAssertEqual(pose.pitch, 0.65, accuracy: 0.03, "roll must not change the measured drop either")
     }
 
     func testDegenerateEyesReturnNil() {

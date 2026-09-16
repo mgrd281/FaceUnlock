@@ -114,11 +114,17 @@ public enum EnrollmentPose: String, CaseIterable, Codable, Sendable, Identifiabl
         switch axis {
         case .none: return 0
         case .yaw: return 0.22    // ≈ 12.5°, in LandmarkPoseEstimator's units
-        case .pitch: return 0.18  // nose-drop proxy units, not an angle
+        case .pitch: return 0.12  // change in nose drop, inter-ocular units (≈ 12°)
         }
     }
 
-    /// For `.none` steps, how near to the baseline the head must be.
+    /// For the straight-ahead step, how centred the nose must sit between the
+    /// eyes. This is the one absolute pose judgement enrolment makes, because it
+    /// is the one the estimator can make reliably for any face.
+    public var centredYawTolerance: Double { 0.25 }
+
+    /// For the neutral-expression step, how near the recorded baseline the head
+    /// must be, per axis.
     public var centredTolerance: Double { 0.16 }
 
     /// How many accepted samples this step requires.

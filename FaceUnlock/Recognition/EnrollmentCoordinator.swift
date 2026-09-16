@@ -178,8 +178,12 @@ public actor EnrollmentCoordinator {
             // Reject a descriptor that is almost identical to one already captured
             // for this step: three copies of the same instant add no information and
             // would make the calibration spread artificially small.
+            // Only a near-identical frame is a duplicate. The feature print is a
+            // robust descriptor, so at 0.995 two consecutive frames of a still
+            // face were often refused, which showed up as the step stalling on
+            // "hold that position".
             let isDuplicate = currentStepEmbeddings.contains { existing in
-                SimilarityMetric.cosine.score(existing, embedding) > 0.995
+                SimilarityMetric.cosine.score(existing, embedding) > 0.999
             }
             if isDuplicate {
                 emit(
@@ -328,15 +332,22 @@ public actor EnrollmentCoordinator {
     /// profiles, holds without asserting any global sign convention.
     private struct DirectionCalibration {
         private var baseline: FacePose?
+        private var baselineSamples = 0
         private var yawSign: Double?
         private var pitchSign: Double?
 
         func matches(step: EnrollmentPose, pose: FacePose) -> Bool {
             switch step.axis {
             case .none:
-                let reference = baseline ?? FacePose()
-                return abs(pose.yaw - reference.yaw) <= step.centredTolerance
-                    && abs(pose.pitch - reference.pitch) <= step.centredTolerance
+                guard let baseline else {
+                    // The straight-ahead step *defines* the baseline, so it cannot
+                    // be judged against one. The nose sitting centred between the
+                    // eyes is the one absolute check the estimator makes reliably
+                    // for any face; the quality gate already bounds everything else.
+                    return abs(pose.yaw) <= step.centredYawTolerance
+                }
+                return abs(pose.yaw - baseline.yaw) <= step.centredTolerance
+                    && abs(pose.pitch - baseline.pitch) <= step.centredTolerance
             case .yaw:
                 return leans(value: delta(step: step, pose: pose), step: step, recorded: yawSign)
             case .pitch:
@@ -370,7 +381,21 @@ public actor EnrollmentCoordinator {
         mutating func record(step: EnrollmentPose, pose: FacePose) {
             switch step.axis {
             case .none:
-                if baseline == nil, step == .straight { baseline = pose }
+                // Average every straight-ahead sample into the baseline, so a
+                // single slightly-off frame does not become the reference for
+                // the whole enrolment.
+                guard step == .straight else { return }
+                if let current = baseline {
+                    let n = Double(baselineSamples)
+                    baseline = FacePose(
+                        yaw: (current.yaw * n + pose.yaw) / (n + 1),
+                        pitch: (current.pitch * n + pose.pitch) / (n + 1),
+                        roll: (current.roll * n + pose.roll) / (n + 1)
+                    )
+                } else {
+                    baseline = pose
+                }
+                baselineSamples += 1
             case .yaw:
                 if yawSign == nil, !step.isOpposite {
                     yawSign = delta(step: step, pose: pose) < 0 ? -1 : 1
@@ -404,7 +429,7 @@ public actor EnrollmentCoordinator {
     private static func guidance(for step: EnrollmentPose, progress: Double, wrongWay: Bool) -> String {
         switch step.axis {
         case .none:
-            return "Face the camera and hold still."
+            return "Centre your face in the circle and hold still."
         case .yaw, .pitch:
             if wrongWay { return "That is the other direction — turn the opposite way." }
             if progress < 0.4 { return "Keep going — a bit further." }

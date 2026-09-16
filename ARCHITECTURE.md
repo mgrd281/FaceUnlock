@@ -113,8 +113,12 @@ reports are 0, ±0.785 and ±1.57, so any rule of the form "turn slightly — be
 reading is already an extreme pose. `LandmarkPoseEstimator` derives a continuous
 estimate from the nose tip's offset relative to the eye midpoint (after removing
 in-plane roll from the eye line), and `FaceDetector` substitutes it whenever
-landmarks resolved. Enrolment compares it only against the same person's own
-straight-ahead baseline, so the estimate's absolute scale never matters.
+landmarks resolved. Yaw is an angle estimate; pitch is the raw nose drop in
+inter-ocular units, which differs from face to face and has no universal zero.
+That is why the straight-ahead step *defines* the enrolment baseline rather than
+being judged against one: it accepts any frame with the nose centred between the
+eyes, averages those frames into the baseline, and every later pose is measured
+relative to it.
 
 ## Descriptor design
 
