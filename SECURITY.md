@@ -60,6 +60,18 @@ All three use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and
 `kSecAttrSynchronizable = false`, and are stored in the data-protection keychain
 (`kSecUseDataProtectionKeychain`).
 
+The data-protection keychain is only open to code with an application
+identifier — a build signed with a development team or a Developer ID. An
+**ad-hoc signed build** (Xcode with no team selected, as in a fresh clone) gets
+`errSecMissingEntitlement` (−34018) on every call. `KeychainService` probes
+this once at launch and, only then, uses the user's **login keychain** instead:
+still the Keychain, still encrypted at rest and ACL-bound to the app, but
+without the per-item accessibility class. The fallback is logged, shown as
+"Keychain: login keychain (ad-hoc build)" in Diagnostics, and never chosen for
+any other error. Release builds are Developer ID-signed and never hit it; to
+get the data-protection keychain in Debug, select your team under
+Signing & Capabilities.
+
 Before a password is stored it is verified against the system directory with
 `ODRecord.verifyPassword` — the same public OpenDirectory mechanism `dscl` uses.
 Note that failed verifications count towards the account's password policy

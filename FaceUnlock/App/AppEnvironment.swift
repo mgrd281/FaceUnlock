@@ -430,6 +430,8 @@ public final class AppEnvironment {
                 )
             },
             credentialStored: credentials.hasSavedPassword,
+            keychainClass: (keychain as? KeychainService)?.usesDataProtectionKeychain == false
+                ? "login keychain (ad-hoc build)" : "data-protection",
             analyticsEnabled: preferences.analyticsEnabled,
             networkUsage: preferences.automaticUpdateChecks
                 ? "Update checks only, when requested"

@@ -25,6 +25,13 @@ builds and runs locally without a developer account. Signing settings for
 distribution are supplied on the command line by the release script rather than
 being baked into the project.
 
+One consequence: an ad-hoc build has no application identifier, so macOS
+refuses it the data-protection keychain (`errSecMissingEntitlement`, −34018).
+FaceUnlock detects this at launch and stores its secrets in the login keychain
+instead (see SECURITY.md); Diagnostics shows which one is in use. To get the
+data-protection keychain in a Debug build, select your team under
+Signing & Capabilities — a free personal team is enough.
+
 ### Running the tests
 
 The unit tests need no camera, no Keychain and no lock screen: every collaborator

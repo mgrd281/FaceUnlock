@@ -36,6 +36,9 @@ public struct DiagnosticsSnapshot: Codable, Equatable, Sendable {
     public var unlockCapability: String
     public var unlockProviders: [ProviderLine]
     public var credentialStored: Bool
+    /// Which keychain holds the secrets: the data-protection keychain (signed
+    /// builds) or the login keychain (ad-hoc builds). Never the contents.
+    public var keychainClass: String = "data-protection"
     public var analyticsEnabled: Bool
     public var networkUsage: String
 
@@ -86,6 +89,7 @@ public struct DiagnosticsSnapshot: Codable, Equatable, Sendable {
         }
         lines.append("")
         lines.append("Password stored in Keychain: \(credentialStored ? "yes" : "no")")
+        lines.append("Keychain class: \(keychainClass)")
         lines.append("Analytics: \(analyticsEnabled ? "enabled" : "disabled")")
         lines.append("Network: \(networkUsage)")
         lines.append("")

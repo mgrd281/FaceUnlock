@@ -90,6 +90,7 @@ public struct DiagnosticsView: View {
                     VStack(alignment: .leading, spacing: Design.Spacing.small) {
                         Text("Privacy").font(.headline)
                         DiagnosticsRow("Password stored", snapshot.credentialStored ? "Yes" : "No")
+                        DiagnosticsRow("Keychain", snapshot.keychainClass)
                         DiagnosticsRow("Analytics", snapshot.analyticsEnabled ? "Enabled" : "Disabled")
                         DiagnosticsRow("Network", snapshot.networkUsage)
                         Text("Exports never include your password, any face descriptor, any image, or any Keychain contents.")

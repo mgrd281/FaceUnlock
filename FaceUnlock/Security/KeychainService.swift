@@ -43,15 +43,50 @@ public enum KeychainItem: String, CaseIterable, Sendable {
 /// * `kSecUseDataProtectionKeychain` is set so items land in the data-protection
 ///   keychain, which supports the same access-control semantics as on iOS and is
 ///   not exported by ordinary keychain dumps of the file-based login keychain.
+///   The data-protection keychain is only available to code that carries an
+///   application identifier, i.e. a build signed with a development team or a
+///   Developer ID. An ad-hoc signed build (Xcode with no team selected) gets
+///   `errSecMissingEntitlement` (−34018) for every call, so the service probes
+///   once at start-up and, only in that case, falls back to the user's login
+///   keychain. The fallback is logged and shown in Diagnostics; it is still the
+///   Keychain — encrypted at rest, ACL-bound to this app — just without the
+///   per-item accessibility class. See SECURITY.md.
 /// * `kSecAttrSynchronizable` is explicitly false: biometric material and account
 ///   credentials must never leave this Mac.
 public struct KeychainService: KeychainServicing {
+    /// `errSecMissingEntitlement`: the data-protection keychain refused the caller
+    /// because the binary carries no application identifier.
+    static let missingEntitlementStatus: OSStatus = -34018
+
     private let service: String
     private let accessGroup: String?
+    /// True when the data-protection keychain accepted the probe.
+    public let usesDataProtectionKeychain: Bool
 
     public init(service: String = "de.faceunlock.mac", accessGroup: String? = nil) {
         self.service = service
         self.accessGroup = accessGroup
+        self.usesDataProtectionKeychain = Self.probeDataProtectionKeychain(service: service)
+        if !usesDataProtectionKeychain {
+            AppLogger.keychain.notice(
+                "Data-protection keychain unavailable (unsigned or ad-hoc build); using the login keychain"
+            )
+        }
+    }
+
+    /// Asks the data-protection keychain for an item that does not exist. "Not
+    /// found" means the keychain is reachable; "missing entitlement" means this
+    /// binary cannot use it at all. Anything else is treated as reachable so a
+    /// transient error does not silently downgrade the storage class.
+    private static func probeDataProtectionKeychain(service: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: "probe.\(UUID().uuidString)",
+            kSecUseDataProtectionKeychain as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) != missingEntitlementStatus
     }
 
     private func baseQuery(for item: KeychainItem) -> [String: Any] {
@@ -59,9 +94,11 @@ public struct KeychainService: KeychainServicing {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: item.account,
-            kSecAttrSynchronizable as String: false,
-            kSecUseDataProtectionKeychain as String: true
+            kSecAttrSynchronizable as String: false
         ]
+        if usesDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
         if let accessGroup {
             query[kSecAttrAccessGroup as String] = accessGroup
         }
@@ -70,11 +107,15 @@ public struct KeychainService: KeychainServicing {
 
     public func setData(_ data: Data, for item: KeychainItem) throws {
         var query = baseQuery(for: item)
-        let attributes: [String: Any] = [
+        var attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrLabel as String: item.label,
-            kSecAttrAccessible as String: item.accessibility
+            kSecAttrLabel as String: item.label
         ]
+        // Accessibility classes are a data-protection concept; the file-based
+        // login keychain rejects or ignores them depending on the OS release.
+        if usesDataProtectionKeychain {
+            attributes[kSecAttrAccessible as String] = item.accessibility
+        }
 
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         switch updateStatus {

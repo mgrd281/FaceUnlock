@@ -23,7 +23,7 @@ request**. Recognition itself never needs the network at all.
 | What | Where | Protection |
 |---|---|---|
 | Face descriptors, threshold, liveness configuration, two timestamps | `~/Library/Application Support/de.faceunlock.mac/profile.bin` | AES-GCM, key in the Keychain; directory `0700`, file `0600` |
-| Profile encryption key | Keychain (`de.faceunlock.mac`, account `profile-encryption-key`) | Data-protection keychain, `WhenUnlockedThisDeviceOnly`, non-syncing |
+| Profile encryption key | Keychain (`de.faceunlock.mac`, account `profile-encryption-key`) | Data-protection keychain, `WhenUnlockedThisDeviceOnly`, non-syncing (login keychain in ad-hoc signed Debug builds — see SECURITY.md) |
 | Account password (only if you save one) | Keychain, account `account-password` | Same |
 | Preferences — presets, toggles, timings | `UserDefaults` | Non-secret by construction; no threshold, no credential, no biometric data |
 | Log messages | Unified logging, on this Mac | No password, descriptor, image or Keychain payload is ever passed to a logger |
