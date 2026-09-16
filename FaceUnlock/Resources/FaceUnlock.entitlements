@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- FaceUnlock is NOT sandboxed.
+
+	     The App Sandbox is incompatible with three things the app genuinely needs:
+	     the Accessibility API used by the (opt-in, normally refused) assisted
+	     lock-screen provider, OpenDirectory password verification, and running
+	     /usr/bin/pmset for the optional lock-on-absence feature. Because of this
+	     the app cannot ship on the Mac App Store; it is distributed as a
+	     Developer ID-signed, notarised app instead. See BUILDING.md.
+
+	     The Hardened Runtime IS enabled, which is what requires the camera
+	     entitlement below even outside the sandbox. -->
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<!-- Not requested: FaceUnlock sends no Apple Events. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<false/>
+</dict>
+</plist>

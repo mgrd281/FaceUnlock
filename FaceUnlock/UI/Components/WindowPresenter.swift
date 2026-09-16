@@ -1,0 +1,103 @@
+import AppKit
+import SwiftUI
+
+/// Presents FaceUnlock's auxiliary windows.
+///
+/// A menu-bar accessory app has no main window and is not activated by default,
+/// so opening a window means creating it, bringing it to the front *and*
+/// activating the app. Doing that in one place keeps every entry point — the menu,
+/// Settings, first run — behaving identically, and guarantees a window is reused
+/// rather than duplicated when it is already open.
+@MainActor
+public final class WindowPresenter {
+    public enum WindowID: String, CaseIterable {
+        case onboarding
+        case recognitionTest
+        case diagnostics
+        case password
+        case about
+
+        var title: String {
+            switch self {
+            case .onboarding: return "FaceUnlock Setup"
+            case .recognitionTest: return "Test Face Recognition"
+            case .diagnostics: return "FaceUnlock Diagnostics"
+            case .password: return "Saved Password"
+            case .about: return "About FaceUnlock"
+            }
+        }
+
+        var contentSize: NSSize {
+            switch self {
+            case .onboarding: return NSSize(width: 760, height: 580)
+            case .recognitionTest: return NSSize(width: 760, height: 520)
+            case .diagnostics: return NSSize(width: 640, height: 560)
+            case .password: return NSSize(width: 580, height: 560)
+            case .about: return NSSize(width: 560, height: 520)
+            }
+        }
+    }
+
+    private var controllers: [WindowID: NSWindowController] = [:]
+    private weak var environment: AppEnvironment?
+
+    public init() {}
+
+    public func attach(environment: AppEnvironment) {
+        self.environment = environment
+    }
+
+    public func show(_ id: WindowID) {
+        guard let environment else {
+            AppLogger.lifecycle.error("Window requested before the environment was attached")
+            return
+        }
+        if let existing = controllers[id] {
+            NSApp.activate(ignoringOtherApps: true)
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let root = rootView(for: id, environment: environment)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: id.contentSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = id.title
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: root)
+        window.center()
+        window.setFrameAutosaveName("de.faceunlock.mac.\(id.rawValue)")
+
+        let controller = NSWindowController(window: window)
+        controllers[id] = controller
+        NSApp.activate(ignoringOtherApps: true)
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    public func close(_ id: WindowID) {
+        controllers[id]?.close()
+        controllers.removeValue(forKey: id)
+    }
+
+    @ViewBuilder
+    private func rootView(for id: WindowID, environment: AppEnvironment) -> some View {
+        switch id {
+        case .onboarding:
+            OnboardingView().environment(environment)
+        case .recognitionTest:
+            RecognitionTestView().environment(environment)
+        case .diagnostics:
+            DiagnosticsView().environment(environment).frame(minWidth: 620, minHeight: 520)
+        case .password:
+            PasswordWindowView().environment(environment)
+        case .about:
+            AboutWindowView().environment(environment)
+        }
+    }
+}

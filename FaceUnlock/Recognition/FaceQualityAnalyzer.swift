@@ -1,0 +1,96 @@
+import CoreVideo
+import Foundation
+
+/// Decides whether a frame is good enough to be embedded.
+///
+/// Running this before the embedding stage is both a quality and a power measure:
+/// a rejected frame costs one 48×48 sample and a handful of arithmetic, whereas a
+/// feature-print request costs orders of magnitude more.
+public protocol FaceQualityAnalyzing: Sendable {
+    func evaluate(faces: [DetectedFace], frame: CameraFrame) -> FaceQualityVerdict
+    /// Clears the motion reference, e.g. between enrolment steps.
+    func reset()
+}
+
+public final class FaceQualityAnalyzer: FaceQualityAnalyzing, @unchecked Sendable {
+    public struct Thresholds: Sendable {
+        public var minimumFaceSize: Double = 0.17
+        public var maximumFaceSize: Double = 0.95
+        public var minimumLuminance: Double = 0.16
+        public var maximumLuminance: Double = 0.92
+        public var minimumSharpness: Double = 0.30
+        public var minimumLandmarkConfidence: Double = 0.55
+        public var maximumMotion: Double = 0.16
+        public var maximumAbsoluteYaw: Double = 0.62
+        public var maximumAbsolutePitch: Double = 0.52
+        public var maximumAbsoluteRoll: Double = 0.45
+
+        public init() {}
+    }
+
+    private let thresholds: Thresholds
+    private let lock = NSLock()
+    private var previousGrid: GrayscaleGrid?
+
+    public init(thresholds: Thresholds = Thresholds()) {
+        self.thresholds = thresholds
+    }
+
+    public func reset() {
+        lock.lock(); previousGrid = nil; lock.unlock()
+    }
+
+    public func evaluate(faces: [DetectedFace], frame: CameraFrame) -> FaceQualityVerdict {
+        guard !faces.isEmpty else { return .rejected([.noFace]) }
+        guard faces.count == 1 else { return .rejected([.multipleFaces]) }
+        guard let face = faces.first else { return .rejected([.noFace]) }
+
+        let shorterEdge = Double(min(frame.width, frame.height))
+        guard shorterEdge > 0 else { return .rejected([.noFace]) }
+        let faceSize = Double(face.pixelRect.height) / shorterEdge
+
+        let bounds = CGRect(x: 0, y: 0, width: frame.width, height: frame.height)
+        guard let grid = GrayscaleGrid(
+            pixelBuffer: frame.pixelBuffer,
+            cropRect: face.pixelRect.expanded(by: 1.1, clampedTo: bounds)
+        ) else {
+            return .rejected([.noFace])
+        }
+
+        let luminance = ImageAnalysis.meanLuminance(grid)
+        let sharpness = ImageAnalysis.sharpness(grid)
+        let motion = motionSince(grid)
+
+        let quality = FaceQuality(
+            faceSize: faceSize,
+            luminance: luminance,
+            sharpness: sharpness,
+            landmarkConfidence: Double(face.landmarks?.confidence ?? 0),
+            motion: motion,
+            pose: face.pose
+        )
+
+        var issues: [FaceQualityIssue] = []
+        if faceSize < thresholds.minimumFaceSize { issues.append(.faceTooSmall) }
+        if faceSize > thresholds.maximumFaceSize { issues.append(.faceTooClose) }
+        if luminance < thresholds.minimumLuminance { issues.append(.tooDark) }
+        if luminance > thresholds.maximumLuminance { issues.append(.tooBright) }
+        if sharpness < thresholds.minimumSharpness { issues.append(.blurry) }
+        if quality.landmarkConfidence < thresholds.minimumLandmarkConfidence { issues.append(.occluded) }
+        if motion > thresholds.maximumMotion { issues.append(.tooMuchMotion) }
+        if abs(face.pose.yaw) > thresholds.maximumAbsoluteYaw
+            || abs(face.pose.pitch) > thresholds.maximumAbsolutePitch
+            || abs(face.pose.roll) > thresholds.maximumAbsoluteRoll {
+            issues.append(.extremePose)
+        }
+
+        return issues.isEmpty ? .acceptable(quality) : .rejected(issues)
+    }
+
+    private func motionSince(_ grid: GrayscaleGrid) -> Double {
+        lock.lock(); defer { lock.unlock() }
+        defer { previousGrid = grid }
+        guard let previousGrid else { return 0 }
+        return ImageAnalysis.meanAbsoluteDifference(previousGrid, grid)
+    }
+}
