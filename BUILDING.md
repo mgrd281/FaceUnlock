@@ -70,6 +70,13 @@ so it is a smoke test for environments without Xcode, never a substitute for
 SWIFTC=/path/to/swiftc ./Scripts/syntax-check.sh
 ```
 
+Two further heuristics catch compiler errors that are slow to diagnose by hand:
+
+```sh
+python3 Scripts/check-viewbuilder-limits.py    # SwiftUI's ten-child ViewBuilder limit
+python3 Scripts/check-weak-self-captures.py    # concurrent closures reading an unbound [weak self]
+```
+
 ## Producing a signed .app
 
 You need an Apple Developer account and a **Developer ID Application**

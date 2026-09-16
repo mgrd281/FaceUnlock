@@ -167,6 +167,24 @@ public final class OnboardingModel {
         let coordinator = self.coordinator ?? environment.makeEnrollmentCoordinator()
         self.coordinator = coordinator
         let settings = environment.preferences.recognitionSettings
+        let environment = self.environment
+        let sampleTarget = calibrationTarget
+
+        // Built here, at method scope, and binding the weak reference to an
+        // immutable local before the inner `Task`.
+        //
+        // A `[weak self]` capture is a mutable box — it can become nil — so a
+        // nested closure that reads it while running concurrently is a data race,
+        // which Swift 6 rejects with "reference to captured var 'self' in
+        // concurrently-executing code". Reading it once, synchronously, and letting
+        // the inner task capture the resulting `let` removes the race entirely.
+        let onScore: @Sendable (Double, PreviewImage?) -> Void = { [weak self] score, preview in
+            guard let model = self else { return }
+            Task { @MainActor in
+                if let preview { model.previewImage = preview.image }
+                if score >= 0 { model.calibrationScores.append(score) }
+            }
+        }
 
         workTask = Task { [weak self] in
             do {
@@ -174,17 +192,12 @@ public final class OnboardingModel {
                     draft: draft,
                     sensitivity: settings.sensitivity,
                     livenessMode: settings.livenessMode,
-                    sampleTarget: self?.calibrationTarget ?? 20
-                ) { score, preview in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        if let preview { self.previewImage = preview.image }
-                        if score >= 0 { self.calibrationScores.append(score) }
-                    }
-                }
+                    sampleTarget: sampleTarget,
+                    onScore: onScore
+                )
+                await environment.profileDidChange(profile)
                 guard let self else { return }
                 self.savedProfile = profile
-                await self.environment.profileDidChange(profile)
                 self.isWorking = false
                 self.advance()
             } catch is CancellationError {

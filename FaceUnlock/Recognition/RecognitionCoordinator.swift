@@ -97,7 +97,11 @@ public actor RecognitionCoordinator {
             progressContinuations[id] = continuation
             continuation.yield(RecognitionProgress(status: machine.status))
             continuation.onTermination = { [weak self] _ in
-                Task { await self?.removeObserver(id) }
+                // Bind the weak reference before the inner task: a nested closure
+                // that reads a `[weak self]` capture while running concurrently is
+                // the "captured var 'self' in concurrently-executing code" race.
+                guard let self else { return }
+                Task { await self.removeObserver(id) }
             }
         }
     }
