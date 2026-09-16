@@ -77,6 +77,13 @@ public final class RecordingNotificationCenter: UserNotificationPosting, @unchec
     public private(set) var posted: [(title: String, body: String)] = []
     public init() {}
     public func post(title: String, body: String) async {
-        lock.lock(); posted.append((title, body)); lock.unlock()
+        record(title: title, body: body)
+    }
+
+    /// `NSLock.lock()` is marked `noasync`, so the critical section lives in a
+    /// synchronous helper rather than inline in the `async` method.
+    private func record(title: String, body: String) {
+        lock.lock(); defer { lock.unlock() }
+        posted.append((title, body))
     }
 }

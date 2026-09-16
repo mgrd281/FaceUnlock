@@ -109,12 +109,17 @@ public final class StubPermissionManager: PermissionManaging, @unchecked Sendabl
     }
 
     public func requestCameraAccess() async -> PermissionState {
-        lock.lock()
+        recordCameraRequest()
+    }
+
+    /// `NSLock.lock()` is marked `noasync`, so the critical section lives in a
+    /// synchronous helper rather than inline in the `async` method.
+    @discardableResult
+    private func recordCameraRequest() -> PermissionState {
+        lock.lock(); defer { lock.unlock() }
         cameraRequestCount += 1
         camera = cameraRequestResult
-        let result = camera
-        lock.unlock()
-        return result
+        return camera
     }
 
     public func promptForAccessibility() {

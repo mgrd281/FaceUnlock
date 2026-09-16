@@ -53,16 +53,30 @@ public final class StubUnlockProvider: UnlockProvider, @unchecked Sendable {
 
     public func setCanUnlock(_ newValue: Bool) { lock.lock(); _canUnlock = newValue; lock.unlock() }
 
-    public func capability() async -> SessionUnlockCapability {
-        lock.lock(); defer { lock.unlock() }; return _capability
-    }
+    // `NSLock.lock()` is marked `noasync`, so every critical section below lives
+    // in a synchronous helper rather than inline in the `async` method.
 
-    public func canUnlockCurrentState() async -> Bool {
-        lock.lock(); defer { lock.unlock() }; return _canUnlock
-    }
+    public func capability() async -> SessionUnlockCapability { readCapability() }
+
+    public func canUnlockCurrentState() async -> Bool { readCanUnlock() }
 
     public func attemptUnlock() async throws {
-        lock.lock(); attemptCount += 1; let result = self.result; lock.unlock()
-        try result.get()
+        try recordAttempt().get()
+    }
+
+    private func readCapability() -> SessionUnlockCapability {
+        lock.lock(); defer { lock.unlock() }
+        return _capability
+    }
+
+    private func readCanUnlock() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _canUnlock
+    }
+
+    private func recordAttempt() -> Result<Void, FaceUnlockError> {
+        lock.lock(); defer { lock.unlock() }
+        attemptCount += 1
+        return result
     }
 }

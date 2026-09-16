@@ -75,6 +75,7 @@ Two further heuristics catch compiler errors that are slow to diagnose by hand:
 ```sh
 python3 Scripts/check-viewbuilder-limits.py    # SwiftUI's ten-child ViewBuilder limit
 python3 Scripts/check-weak-self-captures.py    # concurrent closures reading an unbound [weak self]
+python3 Scripts/check-noasync-locks.py         # blocking noasync APIs called from an async context
 ```
 
 ## Producing a signed .app

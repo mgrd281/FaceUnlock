@@ -31,14 +31,11 @@ public struct LocalAuthenticationService: LocalAuthenticating {
     public func biometryAvailability() -> BiometryAvailability {
         let context = LAContext()
         var error: NSError?
-        let canEvaluate = context.canEvaluatePolicy(.deviceOwnerAuthentication, with: &error)
-        let name: String?
-        switch context.biometryType {
-        case .touchID: name = "Touch ID"
-        case .opticID: name = "Optic ID"
-        case .faceID: name = "Face ID"
-        default: name = nil
-        }
+        let canEvaluate = context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
+        // Touch ID is the only biometry a Mac reports. Everything else — no sensor,
+        // or Apple Watch unlock, which is not a biometry type — falls through to the
+        // account password, which `.deviceOwnerAuthentication` already covers.
+        let name: String? = context.biometryType == .touchID ? "Touch ID" : nil
         return BiometryAvailability(
             canEvaluate: canEvaluate,
             biometryName: name,
@@ -52,7 +49,7 @@ public struct LocalAuthenticationService: LocalAuthenticating {
         var error: NSError?
         // `.deviceOwnerAuthentication` falls back to the account password when no
         // biometric sensor is present, so a Mac without Touch ID is still covered.
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, with: &error) else {
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
             throw FaceUnlockError.localAuthenticationFailed(
                 error?.localizedDescription ?? "Authentication is not available on this Mac."
             )
@@ -86,7 +83,14 @@ public final class StubLocalAuthenticationService: LocalAuthenticating, @uncheck
     public func biometryAvailability() -> BiometryAvailability { availability }
 
     public func authenticate(reason: String) async throws {
-        lock.lock(); reasons.append(reason); lock.unlock()
+        record(reason: reason)
         try result.get()
+    }
+
+    /// `NSLock.lock()` is marked `noasync`, so the critical section lives in a
+    /// synchronous helper rather than inline in the `async` method.
+    private func record(reason: String) {
+        lock.lock(); defer { lock.unlock() }
+        reasons.append(reason)
     }
 }

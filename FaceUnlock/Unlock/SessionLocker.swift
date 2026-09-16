@@ -22,6 +22,24 @@ public struct SessionLocker: SessionLocking {
     }
 
     public func lockDisplay() async throws {
+        let executableURL = self.executableURL
+        // `Process.waitUntilExit()` blocks the calling thread, which must not be a
+        // cooperative-pool thread. Only `URL` and the continuation — both Sendable —
+        // cross the boundary; the `Process` itself never leaves the helper.
+        try await withCheckedThrowingContinuation { (resumed: CheckedContinuation<Void, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try Self.runDisplaySleep(executableURL: executableURL)
+                    resumed.resume()
+                } catch {
+                    resumed.resume(throwing: error)
+                }
+            }
+        }
+        AppLogger.unlock.notice("Display put to sleep because the enrolled user is no longer present")
+    }
+
+    private static func runDisplaySleep(executableURL: URL) throws {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = ["displaysleepnow"]
@@ -40,7 +58,6 @@ public struct SessionLocker: SessionLocking {
                 "pmset exited with status \(process.terminationStatus)"
             )
         }
-        AppLogger.unlock.notice("Display put to sleep because the enrolled user is no longer present")
     }
 }
 
@@ -50,6 +67,13 @@ public final class RecordingSessionLocker: SessionLocking, @unchecked Sendable {
     public private(set) var lockCount = 0
     public init() {}
     public func lockDisplay() async throws {
-        lock.lock(); lockCount += 1; lock.unlock()
+        recordLock()
+    }
+
+    /// `NSLock.lock()` is marked `noasync`, so the critical section lives in a
+    /// synchronous helper rather than inline in the `async` method.
+    private func recordLock() {
+        lock.lock(); defer { lock.unlock() }
+        lockCount += 1
     }
 }

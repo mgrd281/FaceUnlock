@@ -158,7 +158,14 @@ final class StubCredentialStore: CredentialStoring, @unchecked Sendable {
     var hasSavedPassword: Bool { lock.lock(); defer { lock.unlock() }; return stored != nil }
 
     func validateAndStore(password: String, shortName: String) async throws {
-        lock.lock(); stored = password; lock.unlock()
+        store(password)
+    }
+
+    /// `NSLock.lock()` is marked `noasync`, so the critical section lives in a
+    /// synchronous helper rather than inline in the `async` method.
+    private func store(_ password: String) {
+        lock.lock(); defer { lock.unlock() }
+        stored = password
     }
 
     func removePassword() throws { lock.lock(); stored = nil; lock.unlock() }
