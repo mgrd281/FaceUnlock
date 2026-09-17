@@ -64,6 +64,22 @@ public struct BiometricProfile: Codable, Equatable, Sendable {
         self.calibratedFor = calibratedFor
     }
 
+    /// The threshold actually used when judging a live descriptor.
+    ///
+    /// `recognitionThreshold` is what calibration measured; this is what policy
+    /// allows. It is clamped into `[floor, floor + maximumCalibrationLift]` for
+    /// the preset the profile was calibrated for, so a profile calibrated in
+    /// unusually uniform conditions — or before the cap existed — cannot lock
+    /// the enrolled user out, and a tampered profile cannot drop below the floor.
+    public func effectiveThreshold(for source: FaceEmbedding.Source) -> Double {
+        let floor = calibratedFor.scoreFloor(for: source)
+        let ceiling = min(
+            ThresholdCalibrator.maximumThreshold,
+            floor + calibratedFor.maximumCalibrationLift(for: source)
+        )
+        return min(max(recognitionThreshold, floor), ceiling)
+    }
+
     /// Structural validation. A profile that fails this is treated as corrupted
     /// rather than silently matched against, because a truncated or tampered
     /// template could otherwise lower the effective threshold.

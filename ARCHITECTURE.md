@@ -153,7 +153,18 @@ L2-normalised separately, then weighted 0.72 / 0.28 and concatenated.
 The two pipelines score on different scales — the Vision descriptor puts
 impostors at ≈ 0.80–0.86, the face network at ≈ 0.45–0.68 — so
 `SensitivityPreset.scoreFloor(for:)` takes the descriptor source and the
-calibrator is handed the same source. Because `producerVersion` is stored with
+calibrator is handed the same source.
+
+Calibration may only ever move the threshold *up* from that floor, and only so
+far: it samples one sitting, seconds apart, in one lighting condition, so its
+spread measures frame noise rather than the variation the user will really
+present. On a real Mac the Core ML descriptor calibrated to 0.9678 that way —
+a number the same person would miss the next morning in a different room.
+`SensitivityPreset.maximumCalibrationLift(for:)` caps the rise above the floor,
+and `BiometricProfile.effectiveThreshold(for:)` applies the same clamp when
+matching, so a profile calibrated before the cap existed is judged fairly
+without a re-enrolment, while a tampered low threshold is still raised to the
+floor. Because `producerVersion` is stored with
 every descriptor and checked before scoring, a profile enrolled with one
 pipeline can never be matched against descriptors from another;
 `RecognitionCoordinator.refreshPreconditions` additionally refuses such a

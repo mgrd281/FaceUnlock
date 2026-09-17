@@ -59,6 +59,23 @@ public enum SensitivityPreset: String, Codable, CaseIterable, Sendable, Identifi
         }
     }
 
+    /// How far above `scoreFloor(for:)` calibration may push the threshold.
+    ///
+    /// Calibration samples are captured in one sitting, seconds apart, in one
+    /// lighting condition — so their spread measures frame-to-frame noise, not
+    /// the day-to-day variation the user will actually present. Left uncapped,
+    /// a metric-learned descriptor happily calibrates to 0.97 (the same face,
+    /// same light, same second) and then refuses the same person tomorrow in a
+    /// different room. The cap keeps the calibrated threshold in the band where
+    /// genuine scores still land under changed conditions, while remaining far
+    /// above the impostor band.
+    public func maximumCalibrationLift(for source: FaceEmbedding.Source) -> Double {
+        switch source {
+        case .coreMLModel: return 0.06
+        case .visionFeaturePrint, .synthetic: return 0.04
+        }
+    }
+
     /// Consecutive accepted frames required before an unlock is attempted.
     public var requiredConsecutiveMatches: Int {
         switch self {

@@ -102,8 +102,11 @@ final class FaceMatcherTests: XCTestCase {
     func testTightlyClusteredScoresRaiseTheThreshold() {
         let scores = Array(repeating: 0.985, count: 12)
         let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced, source: .synthetic)
-        XCTAssertGreaterThan(outcome.threshold, SensitivityPreset.balanced.scoreFloor(for: .synthetic))
-        XCTAssertLessThanOrEqual(outcome.threshold, ThresholdCalibrator.maximumThreshold)
+        let floor = SensitivityPreset.balanced.scoreFloor(for: .synthetic)
+        XCTAssertGreaterThan(outcome.threshold, floor)
+        XCTAssertLessThanOrEqual(
+            outcome.threshold, floor + SensitivityPreset.balanced.maximumCalibrationLift(for: .synthetic)
+        )
         XCTAssertFalse(outcome.clampedToFloor)
     }
 
@@ -121,6 +124,49 @@ final class FaceMatcherTests: XCTestCase {
         let outcome = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced, source: .coreMLModel)
         XCTAssertGreaterThan(outcome.threshold, SensitivityPreset.balanced.scoreFloor(for: .coreMLModel))
         XCTAssertLessThanOrEqual(outcome.threshold, ThresholdCalibrator.maximumThreshold)
+    }
+
+    /// Calibration runs in one sitting, so a near-zero spread is an artefact of
+    /// the conditions, not evidence that the user always scores that high. The
+    /// lift above the floor is capped so tomorrow's lighting cannot lock them out.
+    func testCalibrationCannotLiftTheThresholdArbitrarilyHigh() {
+        // What the Core ML descriptor actually produces seconds apart: ~0.98,
+        // almost no spread. Uncapped this calibrated to 0.9678 on a real Mac.
+        let scores = Array(repeating: 0.98, count: 20)
+        for preset in SensitivityPreset.allCases {
+            for source in [FaceEmbedding.Source.coreMLModel, .visionFeaturePrint] {
+                let floor = preset.scoreFloor(for: source)
+                let outcome = ThresholdCalibrator.calibrate(
+                    genuineScores: scores, preset: preset, source: source
+                )
+                XCTAssertGreaterThanOrEqual(outcome.threshold, floor)
+                XCTAssertLessThanOrEqual(
+                    outcome.threshold, floor + preset.maximumCalibrationLift(for: source),
+                    "\(preset)/\(source) calibrated above the lift cap"
+                )
+            }
+        }
+    }
+
+    /// A profile carrying an unreachable threshold — calibrated before the cap
+    /// existed, or in unusually uniform conditions — is judged against the capped
+    /// value instead, and a tampered low one is still raised to the floor.
+    func testTheMatcherJudgesAgainstTheCappedThreshold() {
+        let embeddings = (1...6).map { Fake.embedding(seed: UInt64($0)) }
+        let tooStrict = Fake.profile(embeddings: embeddings, threshold: 0.9678, preset: .balanced)
+        let capped = SensitivityPreset.balanced.scoreFloor(for: .synthetic)
+            + SensitivityPreset.balanced.maximumCalibrationLift(for: .synthetic)
+        XCTAssertEqual(tooStrict.effectiveThreshold(for: .synthetic), capped, accuracy: 1e-9)
+
+        let tooWeak = Fake.profile(embeddings: embeddings, threshold: 0.51, preset: .balanced)
+        XCTAssertEqual(
+            tooWeak.effectiveThreshold(for: .synthetic),
+            SensitivityPreset.balanced.scoreFloor(for: .synthetic),
+            accuracy: 1e-9
+        )
+
+        let result = FaceMatcher().match(embeddings[0], against: tooStrict)
+        XCTAssertEqual(result.threshold, capped, accuracy: 1e-9)
     }
 
     func testTooFewSamplesFallsBackToTheFloor() {

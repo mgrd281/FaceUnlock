@@ -69,7 +69,7 @@ public struct FaceMatcher: FaceMatching {
 
         return MatchResult(
             score: aggregate,
-            threshold: profile.recognitionThreshold,
+            threshold: profile.effectiveThreshold(for: embedding.source),
             bestSampleScore: sorted.first?.score ?? 0,
             bestPose: sorted.first?.pose
         )
@@ -84,6 +84,10 @@ public struct FaceMatcher: FaceMatching {
 /// only ever make FaceUnlock *stricter* than the preset, never more permissive —
 /// a user in unusually poor conditions cannot calibrate themselves into a weak
 /// configuration.
+///
+/// It is also not allowed to make FaceUnlock *arbitrarily* stricter. Calibration
+/// measures one sitting, so its spread understates real variation; the lift above
+/// the floor is capped by `SensitivityPreset.maximumCalibrationLift(for:)`.
 public enum ThresholdCalibrator {
     /// Fewer than this many genuine samples is not enough to estimate a spread.
     public static let minimumSamples = 8
@@ -117,7 +121,10 @@ public enum ThresholdCalibrator {
         let mean = ImageAnalysis.mean(genuineScores)
         let deviation = ImageAnalysis.standardDeviation(genuineScores)
         let measured = mean - preset.calibrationSigma * deviation
-        let threshold = min(maximumThreshold, max(floor, measured))
+        // The lift cap matters more than the absolute ceiling here: see
+        // `SensitivityPreset.maximumCalibrationLift(for:)`.
+        let ceiling = min(maximumThreshold, floor + preset.maximumCalibrationLift(for: source))
+        let threshold = min(ceiling, max(floor, measured))
         return Outcome(
             threshold: threshold,
             meanScore: mean,
