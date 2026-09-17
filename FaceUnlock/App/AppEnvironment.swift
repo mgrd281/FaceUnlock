@@ -60,6 +60,7 @@ public final class AppEnvironment {
     public var presentedError: FaceUnlockError?
 
     private var statusTask: Task<Void, Never>?
+    private var identityService: IdentityService?
     private var activationObserver: NSObjectProtocol?
     private var hasStarted = false
     private var compatibilityBuilder: SystemCompatibility?
@@ -180,8 +181,30 @@ public final class AppEnvironment {
         await recognitionCoordinator.start()
         observeStatus()
         observeActivation()
+        startIdentityServiceIfRequested()
         await refreshEverything()
         AppLogger.lifecycle.notice("FaceUnlock is running")
+    }
+
+    /// Starts the lock-screen identity responder only when
+    /// `FACEUNLOCK_IDENTITY_SOCKET` names a path. An ordinary launch never opens
+    /// a socket; this exists so the lock-screen unlock work can be exercised end
+    /// to end before any privileged component is installed. See
+    /// `Spike/lock-screen-unlock/DESIGN.md`.
+    private func startIdentityServiceIfRequested() {
+        guard let path = ProcessInfo.processInfo.environment["FACEUNLOCK_IDENTITY_SOCKET"],
+              !path.isEmpty else { return }
+        let coordinator = recognitionCoordinator
+        let service = IdentityService(socketPath: path) { _ in
+            // `.test` runs the full recognition pipeline but never triggers an
+            // unlock: the verdict is identity, and the caller stays responsible
+            // for what to do with it. The password is never bypassed here.
+            let result = await coordinator.runAttempt(purpose: .test)
+            return result.succeeded
+        }
+        service.start()
+        identityService = service
+        AppLogger.lifecycle.notice("Identity service enabled via FACEUNLOCK_IDENTITY_SOCKET")
     }
 
     public func shutdown() async {
@@ -192,6 +215,8 @@ public final class AppEnvironment {
         }
         statusTask?.cancel()
         statusTask = nil
+        identityService?.stop()
+        identityService = nil
         await recognitionCoordinator.stop()
         await presenceProvider.release()
     }

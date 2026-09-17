@@ -24,8 +24,15 @@ xcodebuild \
     -quiet \
     build
 
-echo "==> Launching $APP"
-open "$APP"
+IDENTITY_SOCKET="/tmp/faceunlock-identity.sock"
+if [ "${1:-}" = "--identity" ] || [ "${2:-}" = "--identity" ]; then
+    echo "==> Launching $APP with the identity responder on $IDENTITY_SOCKET"
+    echo "    (Lock-screen unlock, stage 1 — nothing privileged is installed.)"
+    open "$APP" --env FACEUNLOCK_IDENTITY_SOCKET="$IDENTITY_SOCKET"
+else
+    echo "==> Launching $APP"
+    open "$APP"
+fi
 
 if [ "${1:-}" = "--logs" ]; then
     echo
