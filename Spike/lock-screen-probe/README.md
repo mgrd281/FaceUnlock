@@ -44,6 +44,28 @@ Each line looks like:
 `locked=YES` with `frames` above zero is the answer. Camera permission is
 attributed to Terminal, so approve the prompt for Terminal the first time.
 
+## Measured result
+
+Run on 2026-09-17, MacBook Pro (Apple silicon), built-in FaceTime HD camera,
+user sitting in front of the Mac the whole time:
+
+```
+[15:25:22] locked=no  frames= 46 ... whileLocked=0    facesWhileLocked=0
+[15:25:24] locked=YES frames= 46 ... whileLocked=35   facesWhileLocked=7
+   …
+[15:26:04] locked=YES frames= 47 ... whileLocked=957  facesWhileLocked=192
+[15:26:06] locked=no  frames= 46 ... whileLocked=996  facesWhileLocked=200
+```
+
+**The camera does not stop at the lock screen.** Frame rate was unchanged
+across the transition — ~46 frames per two seconds locked and unlocked alike —
+and Vision found a face in every analysed frame while locked (200 of 200).
+
+So question 1 is a yes, and the remaining obstacle is entirely the unlock side.
+That is worth knowing precisely: nothing has to be invented to *see* the user
+at the lock screen; what is missing is a sanctioned way to tell macOS the
+recognition succeeded.
+
 ## What each outcome means
 
 | Result | Meaning | Next step |
