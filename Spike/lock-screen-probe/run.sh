@@ -16,7 +16,12 @@ else
     SWIFTC="$(xcrun --find swiftc)"
 fi
 
+# Invoked directly, swiftc has no SDK and fails with "unable to load standard
+# library". SDKROOT points it at the SDK inside the selected Xcode.
+SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+export SDKROOT
+
 echo "Building with $SWIFTC"
-"$SWIFTC" -O -o lock-probe main.swift
+"$SWIFTC" -target "$(uname -m)-apple-macos14.0" -sdk "$SDKROOT" -O -o lock-probe main.swift
 echo
 exec ./lock-probe
