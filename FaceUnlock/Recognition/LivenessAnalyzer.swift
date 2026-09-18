@@ -173,12 +173,27 @@ public final class LivenessAnalyzer: LivenessAnalyzing, @unchecked Sendable {
             needsChallenge = score < configuration.minimumScore + 0.12
         }
 
+        // A challenge is only suggested once the window is actually full.
+        //
+        // The passive score is computed over whatever samples exist, and over a
+        // quarter-full window it is necessarily low — there has not been time
+        // for motion, blinks or micro-expressions to register. Treating that as
+        // "the passive evidence is marginal" mistakes a measurement artifact for
+        // a finding, and because the caller latches the challenge it then
+        // persists for the rest of the attempt even after the score recovers.
+        //
+        // Waiting for a full window lowers no threshold: the same score must
+        // still clear the same band. It only stops the question being asked
+        // before the evidence exists to answer it.
+        let windowIsFull = window.count >= configuration.windowFrames
         return LivenessAssessment(
             score: score,
             signals: signals,
             sampleCount: window.count,
             disqualifier: nil,
-            suggestedChallenge: needsChallenge ? suggestChallenge(signals: signals) : nil
+            suggestedChallenge: needsChallenge && windowIsFull
+                ? suggestChallenge(signals: signals)
+                : nil
         )
     }
 

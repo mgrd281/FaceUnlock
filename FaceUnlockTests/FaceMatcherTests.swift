@@ -177,9 +177,9 @@ final class FaceMatcherTests: XCTestCase {
 
     func testStricterPresetsNeverProduceLowerThresholds() {
         let scores = Array(repeating: 0.97, count: 15)
-        let strict = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .strict).threshold
+        let strict = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .strict, source: .synthetic).threshold
         let balanced = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .balanced, source: .synthetic).threshold
-        let convenient = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .convenient).threshold
+        let convenient = ThresholdCalibrator.calibrate(genuineScores: scores, preset: .convenient, source: .synthetic).threshold
         XCTAssertGreaterThanOrEqual(strict, balanced)
         XCTAssertGreaterThanOrEqual(balanced, convenient)
     }

@@ -355,3 +355,145 @@ final class RecognitionCoordinatorTests: XCTestCase {
         XCTFail("Timed out waiting for \(description)")
     }
 }
+
+/// A match must never be accepted before liveness has had a full window.
+///
+/// A photograph matches on every frame just as promptly as a person does, so a
+/// face that clears the consecutive-match requirement in about a second gets
+/// there before the liveness window has filled. Concluding at that point would
+/// accept an identity nothing had checked for liveness.
+final class LivenessOrderingTests: XCTestCase {
+    func testAnInstantMatchStillWaitsForTheLivenessWindow() async {
+        // The liveness analyser is fed nothing, so its window never fills and it
+        // can never authorise a conclusion. A perfect matcher must therefore not
+        // be able to force one.
+        let camera = FakeCameraManager(frameCount: 8)
+        let unlock = FakeUnlockCoordinator()
+        let profile = Fake.profile(
+            embeddings: (1...6).map { Fake.embedding(seed: UInt64($0)) }, threshold: 0.5001)
+        var mutable = RecognitionSettings.default
+        mutable.startDelayAfterLock = 0
+        mutable.attemptTimeout = 1
+        let settings = mutable
+        let coordinator = RecognitionCoordinator(
+            camera: camera,
+            detector: FakeFaceDetector(),
+            quality: FakeQualityAnalyzer(acceptable: true),
+            embedder: FakeEmbedder(),
+            matcher: FakeMatcher(matches: true, threshold: profile.recognitionThreshold),
+            // Only 8 frames are ever delivered, so the 12-frame window never fills.
+            liveness: FakeLiveness(score: 0.99, disqualifier: nil),
+            profileStore: InMemoryProfileStore(profile: profile),
+            unlockCoordinator: unlock,
+            lockMonitor: StubLockStateMonitor(),
+            permissions: StubPermissionManager(camera: .granted, accessibility: .granted),
+            sessionLocker: RecordingSessionLocker(),
+            configurationProvider: {
+                RecognitionRuntimeConfiguration(
+                    settings: settings, unlockEnabled: true, isPaused: false, lockWhenAbsent: false)
+            }
+        )
+        await coordinator.refreshPreconditions()
+        let result = await coordinator.runAttempt(purpose: .challenge)
+        XCTAssertFalse(
+            result.succeeded,
+            "a match must not be accepted while liveness has judged nothing"
+        )
+        let attempts = await unlock.attemptCount
+        XCTAssertEqual(attempts, 0)
+    }
+}
+
+/// Liveness that always reports the marginal band, so the coordinator has to
+/// decide what to do when a prompt is wanted.
+private final class MarginalLiveness: LivenessAnalyzing, @unchecked Sendable {
+    private let score: Double
+    private let lock = NSLock()
+    private var recorded = 0
+
+    init(score: Double) { self.score = score }
+
+    func record(_ sample: LivenessSample) { lock.lock(); recorded += 1; lock.unlock() }
+
+    func assess(configuration: BiometricProfile.LivenessConfiguration) -> LivenessAssessment {
+        lock.lock(); let count = recorded; lock.unlock()
+        return LivenessAssessment(
+            score: score,
+            signals: LivenessSignals(),
+            sampleCount: count,
+            disqualifier: nil,
+            // Always in the band, so a prompt is always wanted.
+            suggestedChallenge: count >= configuration.windowFrames ? .blink : nil
+        )
+    }
+
+    func challengeSatisfied(_ challenge: LivenessChallenge) -> Bool { false }
+    func reset() { lock.lock(); recorded = 0; lock.unlock() }
+}
+
+/// The lock-screen path judges liveness on the floor alone.
+///
+/// This is the deliberate weakening recorded in SECURITY.md and
+/// KNOWN_LIMITATIONS.md §14: no prompt can be drawn over the lock screen, so the
+/// marginal band is allowed through there and only the floor is enforced. These
+/// tests exist so that the concession stays exactly this size — it must not
+/// spread to the in-app paths, and it must not reach below the floor.
+final class LockScreenLivenessFloorTests: XCTestCase {
+    private func coordinator(
+        livenessScore: Double,
+        unlock: FakeUnlockCoordinator = FakeUnlockCoordinator()
+    ) -> RecognitionCoordinator {
+        let profile = Fake.profile(
+            embeddings: (1...6).map { Fake.embedding(seed: UInt64($0)) }, threshold: 0.5001)
+        var mutable = RecognitionSettings.default
+        mutable.startDelayAfterLock = 0
+        mutable.attemptTimeout = 3
+        let settings = mutable
+        return RecognitionCoordinator(
+            camera: FakeCameraManager(frameCount: 40),
+            detector: FakeFaceDetector(),
+            quality: FakeQualityAnalyzer(acceptable: true),
+            embedder: FakeEmbedder(),
+            matcher: FakeMatcher(matches: true, threshold: profile.recognitionThreshold),
+            liveness: MarginalLiveness(score: livenessScore),
+            profileStore: InMemoryProfileStore(profile: profile),
+            unlockCoordinator: unlock,
+            lockMonitor: StubLockStateMonitor(),
+            permissions: StubPermissionManager(camera: .granted, accessibility: .granted),
+            sessionLocker: RecordingSessionLocker(),
+            configurationProvider: {
+                RecognitionRuntimeConfiguration(
+                    settings: settings, unlockEnabled: true, isPaused: false, lockWhenAbsent: false)
+            }
+        )
+    }
+
+    private var floor: Double { SensitivityPreset.balanced.livenessFloor }
+
+    func testAMarginalScoreAboveTheFloorIsAcceptedAtTheLockScreen() async {
+        let coordinator = coordinator(livenessScore: floor + 0.01)
+        await coordinator.refreshPreconditions()
+        let result = await coordinator.runAttempt(purpose: .challenge)
+        XCTAssertTrue(result.succeeded, "above the floor, the lock screen accepts without a prompt")
+    }
+
+    func testBelowTheFloorIsStillRefusedAtTheLockScreen() async {
+        let coordinator = coordinator(livenessScore: floor - 0.01)
+        await coordinator.refreshPreconditions()
+        let result = await coordinator.runAttempt(purpose: .challenge)
+        XCTAssertFalse(result.succeeded, "the floor is the one line this concession does not cross")
+    }
+
+    /// The concession is scoped to the lock screen. In the app, where a prompt
+    /// can be shown, a marginal score must still ask for one — and a challenge
+    /// this fake never satisfies must therefore never succeed.
+    func testTheInAppPathStillDemandsAChallenge() async {
+        let coordinator = coordinator(livenessScore: floor + 0.01)
+        await coordinator.refreshPreconditions()
+        let result = await coordinator.runAttempt(purpose: .test)
+        XCTAssertFalse(
+            result.succeeded,
+            "the in-app path must keep asking for a challenge, not inherit the lock screen's relaxation"
+        )
+    }
+}

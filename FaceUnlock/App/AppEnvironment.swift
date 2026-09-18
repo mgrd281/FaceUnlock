@@ -34,6 +34,8 @@ public final class AppEnvironment {
     let recognitionCoordinator: RecognitionCoordinator
     let unlockCoordinator: UnlockCoordinator
     let presenceProvider: PresenceUnlockProvider
+    let brokerClient: BrokerClient
+    let identityService: IdentityService
     let lockMonitor: any LockStateMonitoring
 
     // MARK: Observable state
@@ -122,9 +124,20 @@ public final class AppEnvironment {
             isEnabled: { Preferences.assistedLockScreenEntryIsEnabled() }
         )
         let manualProvider = ManualConfirmationUnlockProvider()
+
+        // The lock-screen path is a cycle in the object graph: the provider needs
+        // the broker client, the client needs `IdentityService`, and that needs
+        // the coordinator this provider chain is built into. The box is where the
+        // cycle is cut; it is filled at the end of this initialiser, before
+        // anything can ask.
+        let identityBox = Atomic<(any IdentityServing)?>(nil)
+        let brokerClient = BrokerClient(identity: { identityBox.value })
+        let lockScreenProvider = LockScreenUnlockProvider(broker: brokerClient)
+        self.brokerClient = brokerClient
+
         self.presenceProvider = presenceProvider
         self.unlockCoordinator = UnlockCoordinator(
-            providers: [presenceProvider, accessibilityProvider, manualProvider]
+            providers: [presenceProvider, lockScreenProvider, accessibilityProvider, manualProvider]
         )
 
         let unlockCoordinator = self.unlockCoordinator
@@ -153,6 +166,23 @@ public final class AppEnvironment {
             }
         )
 
+        let identityService = IdentityService(
+            recogniser: self.recognitionCoordinator,
+            profileStore: profileStore,
+            configurationProvider: {
+                await MainActor.run {
+                    RecognitionRuntimeConfiguration(
+                        settings: preferencesBox.recognitionSettings,
+                        unlockEnabled: preferencesBox.unlockEnabled,
+                        isPaused: preferencesBox.isPaused,
+                        lockWhenAbsent: preferencesBox.lockWhenAbsent
+                    )
+                }
+            }
+        )
+        self.identityService = identityService
+        identityBox.value = identityService
+
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         self.updateChecker = UpdateChecker(
             feedURL: URL(string: "https://faceunlock.de/appcast/latest.json")
@@ -177,6 +207,9 @@ public final class AppEnvironment {
         guard !hasStarted else { return }
         hasStarted = true
         windows.attach(environment: self)
+        // Registers as the answering agent if the lock-screen components are
+        // installed; a no-op with a logged note if they are not.
+        brokerClient.start()
         await recognitionCoordinator.start()
         observeStatus()
         observeActivation()
@@ -192,6 +225,7 @@ public final class AppEnvironment {
         }
         statusTask?.cancel()
         statusTask = nil
+        brokerClient.stop()
         await recognitionCoordinator.stop()
         await presenceProvider.release()
     }
@@ -248,6 +282,13 @@ public final class AppEnvironment {
     }
 
     public func refreshEverything() async {
+        // Repairs the broker connection if the components were installed, or the
+        // daemon restarted, since the app launched. It is idempotent and cheap,
+        // and it must not go through the unlock provider: in stage 0 the provider
+        // reports `unsupported` without ever consulting the broker, so relying on
+        // that path would leave the app unregistered exactly when the probe needs
+        // it.
+        brokerClient.start()
         refreshPermissions()
         await recognitionCoordinator.refreshPreconditions()
         status = await recognitionCoordinator.status

@@ -147,3 +147,37 @@ The green camera indicator is hardware-controlled and will light whenever
 FaceUnlock is looking for you. This is intentional and cannot — and should not —
 be suppressed. It is also a useful check: if it is on when FaceUnlock is idle,
 something is wrong.
+
+## 14. Lock-screen unlock judges liveness on the floor alone
+
+**The restriction.** The interactive liveness challenge — "blink", "turn your
+head slightly left" — is the part of liveness a photograph and a replayed video
+cannot answer. Showing it needs somewhere to draw it, and the lock screen covers
+every window FaceUnlock owns. There is no supported way for an app in your
+session to put a prompt on top of the lock screen.
+
+**What FaceUnlock does.** On the lock-screen path only, the marginal liveness
+band is allowed through and the score is judged against the floor alone
+(0.62 on the balanced preset) rather than against the band top (0.74) that would
+otherwise trigger a prompt. Everywhere else in the app — the recognition test,
+the pre-lock presence check — a marginal score still asks for a challenge and
+still refuses without one.
+
+Three checks are **not** relaxed, on any path:
+
+- the liveness window must be full before any conclusion is reached, so a
+  matching face can never be accepted before liveness has judged anything;
+- the spoof disqualifiers still reject outright — a frozen feed, a repeated
+  frame sequence, a stale image;
+- the identity threshold is untouched.
+
+**What this costs.** Unlocking a locked session is the highest-value target in
+this app, and this is the one place where a check is relaxed rather than
+reported honestly and refused. A high-quality video replay on a large matte
+display was already a realistic bypass (§8); without the challenge it is a more
+realistic one. This is a deliberate choice, not an oversight, and the residual
+risk is recorded in [SECURITY.md](SECURITY.md).
+
+Two honest alternatives exist and neither is implemented: giving the attempt a
+longer budget so passive evidence can reach the band on its own, and drawing the
+prompt inside SecurityAgent, where the lock screen itself lives.

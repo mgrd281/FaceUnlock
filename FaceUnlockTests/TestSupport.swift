@@ -113,14 +113,21 @@ enum Fake {
 
     /// A stalled or looped feed: identical pixels frame after frame.
     static func frozenSamples(count: Int = 16) -> [LivenessSample] {
-        (0..<count).map { index in
-            LivenessSample(
-                timestamp: Double(index) * 0.1,
+        // The subexpressions are annotated rather than inferred: two optional
+        // Doubles and a ternary of integer literals in one call is enough to
+        // push the type checker past its budget.
+        (0..<count).map { index -> LivenessSample in
+            let timestamp: TimeInterval = Double(index) * 0.1
+            let eyeAspectRatio: Double? = 0.29
+            let noseEyeRatio: Double? = 1.0
+            let frameDifference: Double = index == 0 ? -1 : 0
+            return LivenessSample(
+                timestamp: timestamp,
                 sequence: UInt64(index + 1),
                 pose: FacePose(),
-                eyeAspectRatio: 0.29,
-                noseEyeRatio: 1.0,
-                frameDifference: index == 0 ? -1 : 0,
+                eyeAspectRatio: eyeAspectRatio,
+                noseEyeRatio: noseEyeRatio,
+                frameDifference: frameDifference,
                 highFrequencyRatio: 0.2
             )
         }

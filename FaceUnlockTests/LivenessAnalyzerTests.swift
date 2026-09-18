@@ -147,3 +147,49 @@ final class LivenessAnalyzerTests: XCTestCase {
         XCTAssertEqual(analyzer.assess(configuration: configuration).sampleCount, 0)
     }
 }
+
+/// Regression: a challenge must not be raised before the evidence exists.
+final class LivenessChallengeTimingTests: XCTestCase {
+    private func configuration(windowFrames: Int = 12) -> BiometricProfile.LivenessConfiguration {
+        BiometricProfile.LivenessConfiguration(
+            mode: .adaptiveChallenge,
+            minimumScore: SensitivityPreset.balanced.livenessFloor,
+            windowFrames: windowFrames
+        )
+    }
+
+    /// The bug that stopped the lock screen ever unlocking.
+    ///
+    /// A matching face reaches the required consecutive matches within about
+    /// four frames. At that point the liveness window held four samples, the
+    /// passive score was necessarily near zero, and a blink challenge was
+    /// latched — permanently, because the caller never clears it. In the app the
+    /// user saw the prompt and blinked; at the lock screen, where no prompt can
+    /// be drawn, the attempt simply ran out of time.
+    func testNoChallengeIsSuggestedBeforeTheWindowIsFull() {
+        let analyzer = LivenessAnalyzer()
+        for sample in Fake.liveSamples(count: 5) { analyzer.record(sample) }
+        let assessment = analyzer.assess(configuration: configuration())
+        XCTAssertLessThan(assessment.sampleCount, 12)
+        XCTAssertNil(
+            assessment.suggestedChallenge,
+            "a quarter-full window is a measurement artifact, not marginal evidence"
+        )
+    }
+
+    /// The rule must not become "never challenge": once the window is full, a
+    /// genuinely marginal score still has to ask.
+    func testAMarginalScoreOnAFullWindowStillAsks() {
+        let analyzer = LivenessAnalyzer()
+        // A held photograph: a full window whose passive evidence is weak.
+        for sample in Fake.photoSamples(count: 16) { analyzer.record(sample) }
+        let assessment = analyzer.assess(configuration: configuration())
+        XCTAssertGreaterThanOrEqual(assessment.sampleCount, 12)
+        if assessment.disqualifier == nil {
+            XCTAssertNotNil(
+                assessment.suggestedChallenge,
+                "a full window with marginal evidence must still ask"
+            )
+        }
+    }
+}

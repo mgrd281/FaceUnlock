@@ -6,6 +6,11 @@ public enum RecognitionPurpose: String, Equatable, Sendable {
     case unlock
     /// Started from the UI; never triggers an unlock.
     case test
+    /// Answering a challenge from the lock-screen mechanism. Recognition only:
+    /// the unlock itself is completed by SecurityAgent on the other side of the
+    /// broker, so this purpose must never drive the provider chain and never
+    /// renders a preview.
+    case challenge
 }
 
 /// The result of one complete attempt.

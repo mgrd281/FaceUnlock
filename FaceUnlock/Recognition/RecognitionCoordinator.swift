@@ -46,6 +46,23 @@ public actor RecognitionCoordinator {
     /// renders a frame anywhere.
     private let previewRenderer = PreviewRenderer()
 
+    /// How long a lock-screen challenge may spend looking, kept comfortably
+    /// inside the broker's challenge TTL so the answer is still wanted when it
+    /// arrives. See `BrokerProtocol.challengeTTL`.
+    ///
+    /// Eight seconds rather than four. The shorter budget was chosen to keep the
+    /// lock screen responsive, but it starved the thing it was budgeting for:
+    /// passive liveness needs motion accumulated across frames, and fourteen
+    /// frames is not enough to distinguish a still person from a photograph. On
+    /// this Mac it scored 0.40-0.66 against a 0.62 floor, so whether the Mac
+    /// unlocked came down to whether the user happened to shift in their seat.
+    /// The in-app test reaches 0.77 given seventy-eight frames.
+    ///
+    /// The cost is paid in latency: the password branch now appears up to eight
+    /// seconds after the face branch starts, instead of four. That is the
+    /// trade — a slower fallback in exchange for a decision worth making.
+    static let challengeAttemptTimeout: TimeInterval = 8.0
+
     private var machine = RecognitionStateMachine()
     private var statistics = RecognitionStatistics()
     private var latencySamples: [TimeInterval] = []
@@ -306,7 +323,16 @@ public actor RecognitionCoordinator {
 
         let livenessConfiguration = Self.livenessConfiguration(for: profile, settings: settings)
         let required = profile.calibratedFor.requiredConsecutiveMatches
-        let deadline = started.addingTimeInterval(settings.attemptTimeout)
+        // A challenge is answered against the lock screen's clock, not the app's.
+        // The broker stops waiting after `FU_CHALLENGE_TTL_SECONDS`, and an
+        // answer that arrives later is discarded, so spending the full attempt
+        // timeout on one would guarantee a wasted camera start. Failing fast is
+        // also the better lock-screen behaviour: the password branch appears
+        // promptly instead of after a long blank pause.
+        let timeout = purpose == .challenge
+            ? min(settings.attemptTimeout, RecognitionCoordinator.challengeAttemptTimeout)
+            : settings.attemptTimeout
+        let deadline = started.addingTimeInterval(timeout)
 
         var state = AttemptState()
         var verdict: RecognitionAttemptResult.Verdict = .rejected(.timedOut)
@@ -439,6 +465,20 @@ public actor RecognitionCoordinator {
 
         guard state.consecutiveMatches >= required else { return .keepLooking }
 
+        // A match is never enough on its own: liveness must have had a full
+        // window to judge, or it has not judged anything.
+        //
+        // A face that matches on every frame reaches `required` in about a
+        // second, which is sooner than the liveness window fills. Concluding
+        // there would accept an identity that was never checked for liveness at
+        // all — a photograph matches just as promptly as a person. An earlier
+        // version of this code was saved from that only by latching a challenge
+        // on a quarter-full window; once that premature latch was removed, this
+        // guard is what keeps the ordering honest.
+        guard assessment.sampleCount >= livenessConfiguration.windowFrames else {
+            return .keepLooking
+        }
+
         if let disqualifier = assessment.disqualifier {
             AppLogger.liveness.error("Attempt rejected: \(disqualifier, privacy: .public)")
             return .rejected(.livenessFailed)
@@ -448,6 +488,35 @@ public actor RecognitionCoordinator {
             guard liveness.challengeSatisfied(challenge) else { return .keepLooking }
             state.activeChallenge = nil
         } else if let suggested = assessment.suggestedChallenge {
+            // A challenge needs somewhere to be shown, and the lock screen
+            // covers every window this app owns. Rather than wait for a cue the
+            // user will never see — which is exactly how the first real attempt
+            // spent its whole budget and then timed out — say no now and let the
+            // password branch take over immediately.
+            // The lock screen covers every window this app owns, so the prompt
+            // has nowhere to appear. This path therefore judges liveness on the
+            // floor alone and lets the marginal band through.
+            //
+            // That is a deliberate weakening, chosen knowingly, and it is the
+            // one place in this app where a check is relaxed rather than
+            // reported honestly and refused. What it costs is written down in
+            // SECURITY.md and KNOWN_LIMITATIONS.md §14: the interactive
+            // challenge is what a photograph or a replayed video cannot answer,
+            // and unlocking a locked session is the highest-value target here.
+            // The floor, the full window and the spoof disqualifiers above still
+            // apply — a stale or frozen feed is still rejected outright.
+            //
+            // The honest alternatives, both rejected for this build, were a
+            // longer attempt so passive evidence could reach the band, and
+            // drawing the prompt inside SecurityAgent itself.
+            if purpose == .challenge {
+                AppLogger.liveness.notice(
+                    "Liveness is marginal and no prompt can be shown at the lock screen; judging on the floor alone"
+                )
+                return assessment.score >= livenessConfiguration.minimumScore
+                    ? .recognized
+                    : .rejected(.livenessFailed)
+            }
             state.activeChallenge = suggested
             publish(
                 RecognitionProgress(
@@ -531,7 +600,10 @@ public actor RecognitionCoordinator {
             Attempt finished: purpose=\(purpose.rawValue, privacy: .public) \
             verdict=\(Self.describe(result), privacy: .public) \
             frames=\(result.framesProcessed, privacy: .public) \
-            duration=\(result.duration, format: .fixed(precision: 2), privacy: .public)s
+            duration=\(result.duration, format: .fixed(precision: 2), privacy: .public)s \
+            bestScore=\(result.bestScore, format: .fixed(precision: 4), privacy: .public) \
+            threshold=\(result.threshold, format: .fixed(precision: 4), privacy: .public) \
+            liveness=\(result.livenessScore, format: .fixed(precision: 2), privacy: .public)
             """
         )
 

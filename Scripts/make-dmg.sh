@@ -14,7 +14,7 @@ APP="${1:-build/export/FaceUnlock.app}"
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 STAGING="build/dmg-staging"
-DMG="build/FaceUnlock-$VERSION.dmg"
+DMG="build/FaceUnlock.dmg"
 
 rm -rf "$STAGING" "$DMG"
 mkdir -p "$STAGING"
