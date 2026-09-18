@@ -395,8 +395,22 @@ public actor RecognitionCoordinator {
         case rejected(AppStatus.RejectionReason)
     }
 
+    /// Where the time actually went, so that tuning is aimed rather than guessed.
+    ///
+    /// Reported only for a lock-screen challenge, which is the one the user
+    /// waits on. Every field is a wall-clock instant; the log prints the gaps.
+    private struct AttemptTimings {
+        var started = Date()
+        var cameraReady: Date?
+        var firstFrame: Date?
+        var faceSeen: Date?
+        var identityMet: Date?
+        var livenessMet: Date?
+    }
+
     private func performAttempt(purpose: RecognitionPurpose) async -> RecognitionAttemptResult {
         let started = Date()
+        var timings = AttemptTimings(started: started)
         let settings = await configurationProvider().settings
 
         guard let profile = cachedProfile else {
@@ -420,6 +434,7 @@ public actor RecognitionCoordinator {
                 ? max(settings.processingFrameRate, RecognitionCoordinator.challengeFrameRate)
                 : settings.processingFrameRate
             stream = try await camera.start(frameRate: frameRate)
+            timings.cameraReady = Date()
         } catch {
             let failure = (error as? FaceUnlockError) ?? .cameraStartFailed(error.localizedDescription)
             apply(.failed(failure))
@@ -450,6 +465,7 @@ public actor RecognitionCoordinator {
         var verdict: RecognitionAttemptResult.Verdict = .rejected(.timedOut)
 
         frameLoop: for await frame in stream {
+            if timings.firstFrame == nil { timings.firstFrame = Date() }
             if Task.isCancelled {
                 verdict = .failed(.cancelled)
                 break frameLoop
@@ -460,6 +476,7 @@ public actor RecognitionCoordinator {
             }
 
             switch evaluate(
+                timings: &timings,
                 frame: frame,
                 purpose: purpose,
                 profile: profile,
@@ -501,6 +518,8 @@ public actor RecognitionCoordinator {
             apply(.failed(error))
         }
 
+        if purpose == .challenge { logTimings(timings, endedAt: Date()) }
+
         return finish(
             result: RecognitionAttemptResult(
                 verdict: verdict,
@@ -517,6 +536,7 @@ public actor RecognitionCoordinator {
 
     /// Runs the whole per-frame pipeline and decides what the loop does next.
     private func evaluate(
+        timings: inout AttemptTimings,
         frame: CameraFrame,
         purpose: RecognitionPurpose,
         profile: BiometricProfile,
@@ -547,6 +567,7 @@ public actor RecognitionCoordinator {
         }
 
         apply(.faceSeen)
+        if timings.faceSeen == nil { timings.faceSeen = Date() }
         liveness.record(livenessBuilder.makeSample(for: face, in: frame))
 
         guard let embedding = try? embedder.embedding(for: face, in: frame) else {
@@ -595,6 +616,7 @@ public actor RecognitionCoordinator {
         )
 
         guard state.consecutiveMatches >= required else { return .keepLooking }
+        if timings.identityMet == nil { timings.identityMet = Date() }
 
         // A match is never enough on its own: liveness must have had a full
         // window to judge, or it has not judged anything.
@@ -641,6 +663,7 @@ public actor RecognitionCoordinator {
         if purpose == .challenge, !liveness.challengeSatisfied(.blink) {
             return .keepLooking
         }
+        if timings.livenessMet == nil { timings.livenessMet = Date() }
 
         if let challenge = state.activeChallenge {
             guard liveness.challengeSatisfied(challenge) else { return .keepLooking }
@@ -733,6 +756,35 @@ public actor RecognitionCoordinator {
         configuration.mode = settings.livenessMode
         configuration.minimumScore = max(configuration.minimumScore, settings.sensitivity.livenessFloor)
         return configuration
+    }
+
+    /// Prints where a challenge actually spent its time.
+    ///
+    /// Each figure is a gap, not a running total, so the column that dominates
+    /// is the one worth attacking. Without it, tuning is guesswork dressed as
+    /// engineering: the capture rate was raised twice here on the assumption
+    /// that frames were the constraint, and they never were.
+    ///
+    /// A field reads -1 when that milestone was never reached — no face seen, no
+    /// blink — which distinguishes "this stage was slow" from "this stage never
+    /// happened", a difference that matters when reading a failed attempt.
+    private func logTimings(_ t: AttemptTimings, endedAt ended: Date) {
+        func gap(_ from: Date?, _ to: Date?) -> Double {
+            guard let from, let to else { return -1 }
+            return to.timeIntervalSince(from)
+        }
+        AppLogger.recognition.notice(
+            """
+            timings \
+            camera=\(gap(t.started, t.cameraReady), format: .fixed(precision: 2), privacy: .public) \
+            firstFrame=\(gap(t.cameraReady, t.firstFrame), format: .fixed(precision: 2), privacy: .public) \
+            face=\(gap(t.firstFrame, t.faceSeen), format: .fixed(precision: 2), privacy: .public) \
+            identity=\(gap(t.faceSeen, t.identityMet), format: .fixed(precision: 2), privacy: .public) \
+            blink=\(gap(t.identityMet, t.livenessMet), format: .fixed(precision: 2), privacy: .public) \
+            finish=\(gap(t.livenessMet, ended), format: .fixed(precision: 2), privacy: .public) \
+            total=\(ended.timeIntervalSince(t.started), format: .fixed(precision: 2), privacy: .public)
+            """
+        )
     }
 
     private func finish(result: RecognitionAttemptResult, purpose: RecognitionPurpose) -> RecognitionAttemptResult {

@@ -236,9 +236,25 @@ static OSStatus MechanismCreate(AuthorizationPluginRef inPlugin,
     return errAuthorizationSuccess;
 }
 
+/// Asks SecurityAgent to show "Look at the camera and blink" while we decide.
+///
+/// `kAuthorizationEnvironmentPrompt` is the only public way a mechanism can put
+/// words on an authorisation, and it is Apple's built-in mechanisms that render
+/// it — this one draws nothing itself. Whether the password branch of
+/// `system.login.screensaver` picks the hint up is not documented and not
+/// guaranteed, so this is best-effort: the return value is deliberately ignored
+/// and nothing downstream depends on it. The blink is required either way.
+static void FUSetBlinkPrompt(MechanismRecord *mechanism) {
+    static const char prompt[] = "Look at the camera and blink to unlock with FaceUnlock.";
+    AuthorizationValue value = { sizeof(prompt) - 1, (void *)prompt };
+    (void)mechanism->plugin->callbacks->SetHintValue(
+        mechanism->engine, kAuthorizationEnvironmentPrompt, &value);
+}
+
 static OSStatus MechanismInvoke(AuthorizationMechanismRef inMechanism) {
     MechanismRecord *mechanism = (MechanismRecord *)inMechanism;
     @autoreleasepool {
+        FUSetBlinkPrompt(mechanism);
         BOOL allowed = NO;
         @try {
             allowed = FUAskBroker(mechanism);

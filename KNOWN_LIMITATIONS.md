@@ -151,9 +151,16 @@ something is wrong.
 ## 14. Lock-screen unlock asks for a blink, and a video replay can still answer it
 
 **What it does.** Unlocking the lock screen requires a blink: a full eye closure
-followed by a reopening, observed during that unlock attempt. You do not have to
-be told when — you look at the camera and blink once, which most people do
-within a second or two anyway.
+followed by a reopening, observed during that unlock attempt. Look at the camera
+and blink once.
+
+Blinking deliberately is worth the small effort. Measured over ten unlocks, every
+technical stage together — starting the camera, the first frame, finding the
+face, recognising it, finishing — took **0.59 seconds**. Waiting for a
+spontaneous blink took **4.40 seconds** on top of that, and in one attempt no
+blink arrived within the eight-second budget at all. Blinking on purpose as you
+look brought complete unlocks in to **1.0-1.4 seconds**. The wait is the blink,
+not the software.
 
 **Why a blink and not passive analysis.** This was tried the other way first.
 Passive signals — texture isotropy, shading curvature, specular concentration —

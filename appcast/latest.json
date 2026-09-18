@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
-  "notes": "Lock-screen face unlock now requires a single blink, which a photograph cannot produce. Fixes a broker code-signing pin that prevented the lock-screen path from ever completing, and a Keychain fallback bug that silently destroyed the enrolled profile.",
+  "version": "1.0.2",
+  "notes": "Look at the camera and blink once. Blinking deliberately brings a complete unlock in to about a second; waiting for a spontaneous blink added four seconds and sometimes never arrived.",
   "download": "https://github.com/mgrd281/FaceUnlock/releases/latest"
 }

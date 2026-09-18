@@ -121,7 +121,7 @@ public struct RecognitionTestView: View {
         if result != nil { return "Run again to try different lighting or angles." }
         return environment.profileSummary == nil
             ? "There is nothing to compare against yet."
-            : "Look at the camera as you normally would."
+            : "Look at the camera and blink once."
     }
 
     private var metrics: some View {
