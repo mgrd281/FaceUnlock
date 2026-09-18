@@ -10,6 +10,15 @@ import XCTest
 final class RecognitionCoordinatorTests: XCTestCase {
     // MARK: Fixtures
 
+    /// Returns a coordinator that is *ready*, in the sense the app makes one
+    /// ready before it ever runs an attempt.
+    ///
+    /// `cachedProfile` is populated by `refreshPreconditions` during `start()`,
+    /// and `performAttempt` reads it rather than the store. Tests that built a
+    /// coordinator and went straight to `runAttempt` therefore met a nil profile
+    /// and got `.noEnrolledProfile`, no matter what the store held — six of them
+    /// had been failing that way since before this feature existed. Priming here
+    /// models the real sequence instead of re-testing the gap.
     private func makeCoordinator(
         camera: FakeCameraManager,
         matches: Bool = true,
@@ -20,8 +29,9 @@ final class RecognitionCoordinatorTests: XCTestCase {
         unlock: FakeUnlockCoordinator = FakeUnlockCoordinator(),
         monitor: StubLockStateMonitor = StubLockStateMonitor(),
         locker: RecordingSessionLocker = RecordingSessionLocker(),
-        configuration: RecognitionRuntimeConfiguration? = nil
-    ) -> RecognitionCoordinator {
+        configuration: RecognitionRuntimeConfiguration? = nil,
+        lockScreenBranchInstalled: Bool = false
+    ) async -> RecognitionCoordinator {
         let enrolled = profile ?? Fake.profile(
             embeddings: (1...6).map { Fake.embedding(seed: UInt64($0)) },
             threshold: 0.5001
@@ -32,7 +42,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         let runtime = configuration ?? RecognitionRuntimeConfiguration(
             settings: settings, unlockEnabled: true, isPaused: false, lockWhenAbsent: false
         )
-        return RecognitionCoordinator(
+        let coordinator = RecognitionCoordinator(
             camera: camera,
             detector: FakeFaceDetector(),
             quality: FakeQualityAnalyzer(acceptable: qualityAcceptable),
@@ -44,8 +54,16 @@ final class RecognitionCoordinatorTests: XCTestCase {
             lockMonitor: monitor,
             permissions: StubPermissionManager(camera: .granted, accessibility: .granted),
             sessionLocker: locker,
-            configurationProvider: { runtime }
+            configurationProvider: { runtime },
+            // Tests describe a Mac without the authorisation plugin unless they
+            // say otherwise, so behaviour never depends on what happens to be
+            // installed on the machine running them.
+            lockScreenBranchProvider: { lockScreenBranchInstalled }
         )
+        // What `start()` does in the app, without needing a camera or a
+        // Keychain: make the profile current.
+        await coordinator.profileDidChange(enrolled)
+        return coordinator
     }
 
     // MARK: Profile compatibility
@@ -63,7 +81,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         )
         let camera = FakeCameraManager(frameCount: 30)
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(camera: camera, profile: stale, unlock: unlock)
+        let coordinator = await makeCoordinator(camera: camera, profile: stale, unlock: unlock)
 
         await coordinator.refreshPreconditions()
         let status = await coordinator.status
@@ -83,7 +101,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
     func testRecognisedAttemptUnlocksAndReleasesTheCamera() async {
         let camera = FakeCameraManager(frameCount: 30)
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(camera: camera, unlock: unlock)
+        let coordinator = await makeCoordinator(camera: camera, unlock: unlock)
 
         let result = await coordinator.runAttempt(purpose: .unlock)
 
@@ -98,10 +116,38 @@ final class RecognitionCoordinatorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(stops, 1)
     }
 
+    /// With the authorisation plugin installed, a lock or a wake must *not*
+    /// start an attempt of its own.
+    ///
+    /// That trigger predates the plugin. Left in place it ran a fifteen-second
+    /// attempt every time the Mac woke while its owner was elsewhere — which is
+    /// what kept the camera indicator lit during absence — and then fought the
+    /// real challenge for the camera a moment later. SecurityAgent asks within a
+    /// second of the user actually being there, so there is nothing left for it
+    /// to achieve.
+    func testALockEventStartsNoAttemptWhenTheLockScreenCanAsk() async throws {
+        let camera = FakeCameraManager(frameCount: 30)
+        let unlock = FakeUnlockCoordinator()
+        let monitor = StubLockStateMonitor(locked: true)
+        let coordinator = await makeCoordinator(
+            camera: camera, unlock: unlock, monitor: monitor, lockScreenBranchInstalled: true
+        )
+
+        await coordinator.start()
+        monitor.send(.screenLocked)
+        try await Task.sleep(for: .milliseconds(400))
+
+        let attempts = await unlock.attemptCount
+        XCTAssertEqual(attempts, 0, "the lock screen does the asking when it can")
+        let running = await camera.isRunning()
+        XCTAssertFalse(running, "and the camera stays dark until it does")
+        await coordinator.stop()
+    }
+
     /// A recognition test must never unlock anything.
     func testTestPurposeNeverUnlocks() async {
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(camera: FakeCameraManager(frameCount: 30), unlock: unlock)
+        let coordinator = await makeCoordinator(camera: FakeCameraManager(frameCount: 30), unlock: unlock)
 
         let result = await coordinator.runAttempt(purpose: .test)
 
@@ -115,7 +161,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
 
     func testNonMatchingFaceIsRejectedAndNothingUnlocks() async {
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 20), matches: false, unlock: unlock
         )
 
@@ -128,7 +174,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
 
     func testLivenessDisqualifierStopsTheAttempt() async {
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 20),
             livenessDisqualifier: "the camera feed stopped changing",
             unlock: unlock
@@ -145,7 +191,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
     /// matching frames arrive.
     func testMarginalLivenessNeverAccepts() async {
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 40), livenessScore: 0.2, unlock: unlock
         )
 
@@ -158,7 +204,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
 
     func testPoorQualityFramesNeverReachTheMatcher() async {
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 20), qualityAcceptable: false, unlock: unlock
         )
 
@@ -171,7 +217,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
     }
 
     func testAnEmptyFeedEndsAsTimedOut() async {
-        let coordinator = makeCoordinator(camera: FakeCameraManager(frameCount: 0))
+        let coordinator = await makeCoordinator(camera: FakeCameraManager(frameCount: 0))
         let result = await coordinator.runAttempt(purpose: .unlock)
         XCTAssertEqual(result.verdict, .rejected(.timedOut))
     }
@@ -209,7 +255,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
     func testCameraFailurePropagatesWithoutUnlocking() async {
         let camera = FakeCameraManager(frameCount: 0, startError: .cameraBusy)
         let unlock = FakeUnlockCoordinator()
-        let coordinator = makeCoordinator(camera: camera, unlock: unlock)
+        let coordinator = await makeCoordinator(camera: camera, unlock: unlock)
 
         let result = await coordinator.runAttempt(purpose: .unlock)
 
@@ -227,7 +273,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
 
         let locker = RecordingSessionLocker()
         let monitor = StubLockStateMonitor(locked: false)
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 10),
             matches: false,
             monitor: monitor,
@@ -247,7 +293,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         settings.attemptTimeout = 2
 
         let locker = RecordingSessionLocker()
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 10),
             matches: false,
             monitor: StubLockStateMonitor(locked: true),
@@ -267,7 +313,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         settings.attemptTimeout = 2
 
         let locker = RecordingSessionLocker()
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: FakeCameraManager(frameCount: 10),
             matches: false,
             locker: locker,
@@ -286,7 +332,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         let camera = FakeCameraManager(frameCount: 30)
         let unlock = FakeUnlockCoordinator()
         let monitor = StubLockStateMonitor(locked: true)
-        let coordinator = makeCoordinator(camera: camera, unlock: unlock, monitor: monitor)
+        let coordinator = await makeCoordinator(camera: camera, unlock: unlock, monitor: monitor)
 
         await coordinator.start()
         monitor.send(.screenLocked)
@@ -302,7 +348,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         settings.startDelayAfterLock = 0
         let camera = FakeCameraManager(frameCount: 30)
         let monitor = StubLockStateMonitor(locked: true)
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: camera,
             monitor: monitor,
             configuration: RecognitionRuntimeConfiguration(
@@ -324,7 +370,7 @@ final class RecognitionCoordinatorTests: XCTestCase {
         settings.startDelayAfterLock = 0
         let camera = FakeCameraManager(frameCount: 30)
         let monitor = StubLockStateMonitor(locked: true)
-        let coordinator = makeCoordinator(
+        let coordinator = await makeCoordinator(
             camera: camera,
             monitor: monitor,
             configuration: RecognitionRuntimeConfiguration(

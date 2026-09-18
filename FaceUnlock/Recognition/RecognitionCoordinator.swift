@@ -42,6 +42,7 @@ public actor RecognitionCoordinator {
     private let permissions: any PermissionManaging
     private let sessionLocker: any SessionLocking
     private let configurationProvider: @Sendable () async -> RecognitionRuntimeConfiguration
+    private let lockScreenBranchProvider: @Sendable () -> Bool
     /// Only instantiated for `RecognitionPurpose.test`; an unlock attempt never
     /// renders a frame anywhere.
     private let previewRenderer = PreviewRenderer()
@@ -91,8 +92,19 @@ public actor RecognitionCoordinator {
     static let prewarmWindow: TimeInterval = 6
 
     /// Whether the authorisation plugin is installed and composed into the
-    /// lock-screen rule. Cached for a short time because it reads the
-    /// authorisation database, and it cannot change without an installer run.
+    /// lock-screen rule.
+    ///
+    /// Injected rather than read directly. The obvious version called
+    /// `LockScreenUnlockProvider.faceBranchIsInstalled()` here, which reads the
+    /// live authorisation database — and so made this coordinator behave
+    /// differently depending on whether the machine running it happened to have
+    /// the feature installed. A test that had passed for months began failing
+    /// the moment stage 1 was enabled on the developer's own Mac, which is
+    /// exactly the kind of hidden global input the dependency rule in
+    /// ARCHITECTURE.md exists to keep out.
+    ///
+    /// Cached briefly because the real implementation is not free and cannot
+    /// change without an installer run.
     private var lockScreenBranchCheckedAt: Date?
     private var lockScreenBranchCache = false
 
@@ -101,7 +113,7 @@ public actor RecognitionCoordinator {
            Date().timeIntervalSince(checkedAt) < 30 {
             return lockScreenBranchCache
         }
-        lockScreenBranchCache = LockScreenUnlockProvider.faceBranchIsInstalled()
+        lockScreenBranchCache = lockScreenBranchProvider()
         lockScreenBranchCheckedAt = Date()
         return lockScreenBranchCache
     }
@@ -128,7 +140,9 @@ public actor RecognitionCoordinator {
         lockMonitor: any LockStateMonitoring,
         permissions: any PermissionManaging,
         sessionLocker: any SessionLocking,
-        configurationProvider: @escaping @Sendable () async -> RecognitionRuntimeConfiguration
+        configurationProvider: @escaping @Sendable () async -> RecognitionRuntimeConfiguration,
+        lockScreenBranchProvider: @escaping @Sendable () -> Bool
+            = { LockScreenUnlockProvider.faceBranchIsInstalled() }
     ) {
         self.camera = camera
         self.detector = detector
@@ -143,6 +157,7 @@ public actor RecognitionCoordinator {
         self.permissions = permissions
         self.sessionLocker = sessionLocker
         self.configurationProvider = configurationProvider
+        self.lockScreenBranchProvider = lockScreenBranchProvider
     }
 
     // MARK: - Observation
