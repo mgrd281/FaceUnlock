@@ -210,10 +210,20 @@ public final class Preferences {
         defaults.bool(forKey: Key.allowAssistedLockScreenEntry)
     }
 
+    /// On unless the user turns it off.
+    ///
+    /// `bool(forKey:)` answers false for a key that was never set, so the
+    /// previous form left update checking disabled for everyone who had not
+    /// explicitly enabled it — which, for a security tool distributed outside
+    /// the App Store, is the wrong default: it is how people find out that a
+    /// version which could not unlock, or which destroyed their enrolment, has
+    /// been fixed. The check is a single request for a small JSON file and
+    /// downloads nothing by itself.
     public nonisolated static func automaticUpdateChecksAreEnabled(
         defaults: UserDefaults = .standard
     ) -> Bool {
-        defaults.bool(forKey: Key.automaticUpdateChecks)
+        if defaults.object(forKey: Key.automaticUpdateChecks) == nil { return true }
+        return defaults.bool(forKey: Key.automaticUpdateChecks)
     }
 
     private static func decodeSettings(from defaults: UserDefaults) -> RecognitionSettings {

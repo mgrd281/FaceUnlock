@@ -107,6 +107,31 @@ enum Fake {
             var copy = sample
             copy.highFrequencyRatio = 0.85
             copy.noseEyeRatio = 1.0
+            // Measured on a real phone: isotropy fell to 0.74 when the pixel
+            // grid resolved. It reached 0.95 when it did not — see
+            // `screenReplayAtUnluckyDistanceSamples`.
+            copy.textureIsotropy = 0.74
+            return copy
+        }
+    }
+
+    /// The case that actually defeated this system: a phone held where the
+    /// camera cannot resolve its pixel grid, so the texture signal reads like
+    /// skin. Everything except motion and blink looks genuine.
+    static func screenReplayAtUnluckyDistanceSamples(count: Int = 16) -> [LivenessSample] {
+        screenReplaySamples(count: count).map { sample in
+            var copy = sample
+            copy.textureIsotropy = 0.95
+            copy.frameDifference = 0.0015
+            return copy
+        }
+    }
+
+    /// A still image displayed on a screen: no blink, ever.
+    static func stillImageOnScreenSamples(count: Int = 16) -> [LivenessSample] {
+        screenReplayAtUnluckyDistanceSamples(count: count).map { sample in
+            var copy = sample
+            copy.eyeAspectRatio = 0.29
             return copy
         }
     }

@@ -148,36 +148,54 @@ FaceUnlock is looking for you. This is intentional and cannot — and should not
 be suppressed. It is also a useful check: if it is on when FaceUnlock is idle,
 something is wrong.
 
-## 14. Lock-screen unlock judges liveness on the floor alone
+## 14. Lock-screen unlock asks for a blink, and a video replay can still answer it
 
-**The restriction.** The interactive liveness challenge — "blink", "turn your
-head slightly left" — is the part of liveness a photograph and a replayed video
-cannot answer. Showing it needs somewhere to draw it, and the lock screen covers
-every window FaceUnlock owns. There is no supported way for an app in your
-session to put a prompt on top of the lock screen.
+**What it does.** Unlocking the lock screen requires a blink: a full eye closure
+followed by a reopening, observed during that unlock attempt. You do not have to
+be told when — you look at the camera and blink once, which most people do
+within a second or two anyway.
 
-**What FaceUnlock does.** On the lock-screen path only, the marginal liveness
-band is allowed through and the score is judged against the floor alone
-(0.62 on the balanced preset) rather than against the band top (0.74) that would
-otherwise trigger a prompt. Everywhere else in the app — the recognition test,
-the pre-lock presence check — a marginal score still asks for a challenge and
-still refuses without one.
+**Why a blink and not passive analysis.** This was tried the other way first.
+Passive signals — texture isotropy, shading curvature, specular concentration —
+were implemented, weighted and measured against a real attack. The results were
+not close:
 
-Three checks are **not** relaxed, on any path:
+| signal | live face | same face on a phone |
+|---|---|---|
+| texture isotropy | 0.98 | **0.74 … 0.95** |
+| specular concentration | 0.32 | **0.73** |
+| shading curvature | 0.00 | 0.00 |
+| micro-motion | 0.93 | 0.45 |
 
-- the liveness window must be full before any conclusion is reached, so a
-  matching face can never be accepted before liveness has judged anything;
-- the spoof disqualifiers still reject outright — a frozen feed, a repeated
-  frame sequence, a stale image;
-- the identity threshold is untouched.
+Isotropy gave 0.74 when the camera resolved the phone's pixel grid and 0.95 when
+it did not — the same attack, the same phone, a different distance. Specular
+concentration scored the *attack* higher than the real face, because a phone's
+glass throws one sharp reflection while skin scatters. Shading read zero for
+everything. With those weights a photograph on a phone unlocked a real Mac
+**three times out of three, in under a second**.
 
-**What this costs.** Unlocking a locked session is the highest-value target in
-this app, and this is the one place where a check is relaxed rather than
-reported honestly and refused. A high-quality video replay on a large matte
-display was already a realistic bypass (§8); without the challenge it is a more
-realistic one. This is a deliberate choice, not an oversight, and the residual
-risk is recorded in [SECURITY.md](SECURITY.md).
+A blink is not a better-tuned version of those signals; it is a different kind of
+evidence. A still image cannot produce a closure and a reopening at any distance,
+in any lighting, at any angle.
 
-Two honest alternatives exist and neither is implemented: giving the attempt a
-longer budget so passive evidence can reach the band on its own, and drawing the
-prompt inside SecurityAgent, where the lock screen itself lives.
+**What it does not stop.** A *video* of you blinking will satisfy it. Defeating
+that needs the blink demanded at a moment the attacker cannot predict, and
+demanding anything needs somewhere to display the demand. macOS provides no way
+for a third-party authorisation plugin to draw on the lock screen: the only hints
+SecurityAgent renders are `prompt` and `icon`, and only for Apple's own built-in
+mechanisms.
+
+An active screen flash — lighting the face and measuring how a rounded surface
+reflects it, versus a flat glossy one — was investigated as a replacement that
+would need nothing from the user. It cannot be delivered either: there is no
+public API for display brightness (`IODisplayConnect` is gone on Apple silicon,
+and `DisplayServices` and `CoreDisplay` are private), and a white window cannot
+be drawn over the lock screen for the same reason a prompt cannot. FaceUnlock
+does not use private APIs, so the approach is recorded as investigated and
+rejected rather than shipped.
+
+**So, plainly:** lock-screen face unlock resists a printed photograph and a
+still image on a screen. It does not resist a video replay of you blinking.
+Your password remains available at all times as a separate branch of the same
+authorisation rule, and if that threat is in your model, leave lock-screen
+unlock uninstalled and use FaceUnlock for presence only.

@@ -20,6 +20,9 @@ public struct LivenessSample: Equatable, Sendable {
     public var frameDifference: Double
     /// Horizontal high-frequency energy ratio of the face crop, `0...1`.
     public var highFrequencyRatio: Double
+    /// How undirectional the fine detail is, `0...1`. Skin is isotropic; a panel
+    /// or halftone grid is not. Available from a single frame.
+    public var textureIsotropy: Double = 0
 
     public init(
         timestamp: TimeInterval,
@@ -28,7 +31,8 @@ public struct LivenessSample: Equatable, Sendable {
         eyeAspectRatio: Double?,
         noseEyeRatio: Double?,
         frameDifference: Double,
-        highFrequencyRatio: Double
+        highFrequencyRatio: Double,
+        textureIsotropy: Double = 0
     ) {
         self.timestamp = timestamp
         self.sequence = sequence
@@ -37,6 +41,7 @@ public struct LivenessSample: Equatable, Sendable {
         self.noseEyeRatio = noseEyeRatio
         self.frameDifference = frameDifference
         self.highFrequencyRatio = highFrequencyRatio
+        self.textureIsotropy = textureIsotropy
     }
 }
 
@@ -60,6 +65,7 @@ public final class LivenessSampleBuilder: @unchecked Sendable {
 
         var difference = 0.0
         var highFrequency = 0.0
+        var isotropy = 0.0
         lock.lock()
         if let grid {
             if let previousGrid {
@@ -70,6 +76,7 @@ public final class LivenessSampleBuilder: @unchecked Sendable {
                 difference = -1
             }
             highFrequency = ImageAnalysis.highFrequencyRatio(grid)
+            isotropy = ImageAnalysis.textureIsotropy(grid)
             previousGrid = grid
         }
         lock.unlock()
@@ -81,7 +88,8 @@ public final class LivenessSampleBuilder: @unchecked Sendable {
             eyeAspectRatio: face.landmarks.flatMap(Self.eyeAspectRatio),
             noseEyeRatio: face.landmarks.flatMap(Self.noseEyeRatio),
             frameDifference: difference,
-            highFrequencyRatio: highFrequency
+            highFrequencyRatio: highFrequency,
+            textureIsotropy: isotropy
         )
     }
 

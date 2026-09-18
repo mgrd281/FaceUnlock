@@ -367,7 +367,7 @@ final class LivenessOrderingTests: XCTestCase {
         // The liveness analyser is fed nothing, so its window never fills and it
         // can never authorise a conclusion. A perfect matcher must therefore not
         // be able to force one.
-        let camera = FakeCameraManager(frameCount: 8)
+        let camera = FakeCameraManager(frameCount: 5)
         let unlock = FakeUnlockCoordinator()
         let profile = Fake.profile(
             embeddings: (1...6).map { Fake.embedding(seed: UInt64($0)) }, threshold: 0.5001)
@@ -381,7 +381,7 @@ final class LivenessOrderingTests: XCTestCase {
             quality: FakeQualityAnalyzer(acceptable: true),
             embedder: FakeEmbedder(),
             matcher: FakeMatcher(matches: true, threshold: profile.recognitionThreshold),
-            // Only 8 frames are ever delivered, so the 12-frame window never fills.
+            // Only 5 frames are delivered — fewer than any window requirement.
             liveness: FakeLiveness(score: 0.99, disqualifier: nil),
             profileStore: InMemoryProfileStore(profile: profile),
             unlockCoordinator: unlock,
@@ -470,11 +470,21 @@ final class LockScreenLivenessFloorTests: XCTestCase {
 
     private var floor: Double { SensitivityPreset.balanced.livenessFloor }
 
-    func testAMarginalScoreAboveTheFloorIsAcceptedAtTheLockScreen() async {
-        let coordinator = coordinator(livenessScore: floor + 0.01)
+    /// The lock screen no longer accepts on the passive floor alone.
+    ///
+    /// It did, briefly, and the consequence was measured: a photograph on a
+    /// phone cleared the floor and unlocked this Mac three times out of three,
+    /// in under a second. A blink is required there now, and `MarginalLiveness`
+    /// never satisfies one, so even a score well above the floor must be
+    /// refused.
+    func testAboveTheFloorIsNotEnoughWithoutABlink() async {
+        let coordinator = coordinator(livenessScore: floor + 0.2)
         await coordinator.refreshPreconditions()
         let result = await coordinator.runAttempt(purpose: .challenge)
-        XCTAssertTrue(result.succeeded, "above the floor, the lock screen accepts without a prompt")
+        XCTAssertFalse(
+            result.succeeded,
+            "passive evidence alone must not unlock the lock screen any more"
+        )
     }
 
     func testBelowTheFloorIsStillRefusedAtTheLockScreen() async {

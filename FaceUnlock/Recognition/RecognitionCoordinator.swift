@@ -63,11 +63,55 @@ public actor RecognitionCoordinator {
     /// trade — a slower fallback in exchange for a decision worth making.
     static let challengeAttemptTimeout: TimeInterval = 8.0
 
+    /// Frame rate for a lock-screen challenge.
+    ///
+    /// Unlock monitoring runs at 6 fps to stay near zero cost while the Mac is
+    /// idle, but a challenge is a short burst with a user waiting in front of
+    /// it. Evidence arrives per frame, so the frame rate is the single biggest
+    /// lever on how long they wait: at 6 fps the eight frames the passive
+    /// signals need take 1.3s; at 15 fps they take 0.53s.
+    static let challengeFrameRate: Double = 15
+
+    /// Frames the passive liveness signals need before their trimmed mean is
+    /// worth acting on.
+    ///
+    /// This is deliberately smaller than `windowFrames`, which sizes the
+    /// *motion* window. Requiring the full window made sense when the score
+    /// depended on movement accumulating over time; it does not describe how
+    /// isotropy, shading and specular concentration behave, which are properties
+    /// of each frame and stable from the first few. Keeping the full-window rule
+    /// would have held a decided verdict for another second and a half for no
+    /// gain in confidence. The floor itself is unchanged.
+    static let passiveEvidenceFrames = 8
+
+    /// How long a pre-warmed camera is held waiting for a challenge that may
+    /// never come. Long enough to cover the gap between the user waking the Mac
+    /// and SecurityAgent asking; short enough that a stray wake does not leave
+    /// the indicator lit.
+    static let prewarmWindow: TimeInterval = 6
+
+    /// Whether the authorisation plugin is installed and composed into the
+    /// lock-screen rule. Cached for a short time because it reads the
+    /// authorisation database, and it cannot change without an installer run.
+    private var lockScreenBranchCheckedAt: Date?
+    private var lockScreenBranchCache = false
+
+    private func lockScreenBranchIsActive() -> Bool {
+        if let checkedAt = lockScreenBranchCheckedAt,
+           Date().timeIntervalSince(checkedAt) < 30 {
+            return lockScreenBranchCache
+        }
+        lockScreenBranchCache = LockScreenUnlockProvider.faceBranchIsInstalled()
+        lockScreenBranchCheckedAt = Date()
+        return lockScreenBranchCache
+    }
+
     private var machine = RecognitionStateMachine()
     private var statistics = RecognitionStatistics()
     private var latencySamples: [TimeInterval] = []
     private var progressContinuations: [UUID: AsyncStream<RecognitionProgress>.Continuation] = [:]
     private var monitoringTask: Task<Void, Never>?
+    private var prewarmExpiry: Task<Void, Never>?
     private var attemptTask: Task<RecognitionAttemptResult, Never>?
     private var cachedProfile: BiometricProfile?
 
@@ -199,6 +243,7 @@ public actor RecognitionCoordinator {
             // A wake while still locked is the cheapest possible retry trigger:
             // the user just did something, so they are probably in front of the Mac.
             if lockMonitor.isScreenLocked() {
+                await prewarmForImminentChallenge()
                 await beginAttemptIfAppropriate(trigger: .screenLocked)
             }
         case .screenUnlocked:
@@ -222,6 +267,37 @@ public actor RecognitionCoordinator {
         case idleApproaching
     }
 
+    /// Brings the camera up on the signal the user themselves generated —
+    /// opening the lid, touching a key, moving the trackpad — so that the
+    /// lock-screen question, which arrives a moment later, is answered by a
+    /// camera that is already settled.
+    ///
+    /// Bounded rather than held: if no challenge arrives, the camera is released
+    /// again. Waking is a poor predictor of presence — a notification or a
+    /// connected charger wakes the screen too — and the indicator light must
+    /// keep meaning "a face is being looked for right now" rather than "this Mac
+    /// is asleep and might be watching".
+    private func prewarmForImminentChallenge() async {
+        guard lockScreenBranchIsActive() else { return }
+        let configuration = await configurationProvider()
+        guard configuration.unlockEnabled, !configuration.isPaused, cachedProfile != nil else { return }
+        guard attemptTask == nil else { return }
+
+        await camera.prewarm(frameRate: RecognitionCoordinator.challengeFrameRate)
+        prewarmExpiry?.cancel()
+        prewarmExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(RecognitionCoordinator.prewarmWindow))
+            guard let self else { return }
+            await self.releasePrewarmedCamera()
+        }
+    }
+
+    /// Releases a pre-warmed camera, unless a real attempt has taken it over.
+    private func releasePrewarmedCamera() async {
+        guard attemptTask == nil else { return }
+        await camera.stop()
+    }
+
     private func beginAttemptIfAppropriate(trigger: AttemptTrigger) async {
         let configuration = await configurationProvider()
         guard configuration.unlockEnabled, !configuration.isPaused else { return }
@@ -236,6 +312,24 @@ public actor RecognitionCoordinator {
             }
             guard lockMonitor.isScreenLocked() else { return }
         }
+
+        // When the lock screen itself can ask, it does the asking.
+        //
+        // This trigger predates the authorisation plugin. It ran a full attempt
+        // on every lock and every wake, which is why the camera light came on
+        // for fifteen seconds each time the Mac woke while its owner was
+        // elsewhere — and why two attempts then fought over the camera when a
+        // real challenge arrived moments later.
+        //
+        // With the face branch installed there is nothing for it to achieve: it
+        // cannot complete an unlock, and SecurityAgent will ask within a second
+        // of the user actually being there. Standing down means the camera runs
+        // only while a real unlock is being decided, which is the behaviour the
+        // indicator light should be describing.
+        if lockScreenBranchIsActive(), lockMonitor.isScreenLocked() {
+            return
+        }
+
         _ = await runAttempt(purpose: .unlock)
     }
 
@@ -307,7 +401,10 @@ public actor RecognitionCoordinator {
 
         let stream: AsyncStream<CameraFrame>
         do {
-            stream = try await camera.start(frameRate: settings.processingFrameRate)
+            let frameRate = purpose == .challenge
+                ? max(settings.processingFrameRate, RecognitionCoordinator.challengeFrameRate)
+                : settings.processingFrameRate
+            stream = try await camera.start(frameRate: frameRate)
         } catch {
             let failure = (error as? FaceUnlockError) ?? .cameraStartFailed(error.localizedDescription)
             apply(.failed(failure))
@@ -449,6 +546,25 @@ public actor RecognitionCoordinator {
         let assessment = liveness.assess(configuration: livenessConfiguration)
         state.lastLivenessScore = assessment.score
 
+        // The lock screen has no UI to show any of this, so the log is the only
+        // place the individual signals can be seen. Debug level, so it costs
+        // nothing unless someone is looking.
+        if purpose == .challenge {
+            let signals = assessment.signals
+            AppLogger.liveness.debug(
+                """
+                signals n=\(assessment.sampleCount, privacy: .public) \
+                iso=\(signals.isotropy, format: .fixed(precision: 2), privacy: .public) \
+                tex=\(signals.texture, format: .fixed(precision: 2), privacy: .public) \
+                motion=\(signals.microMotion, format: .fixed(precision: 2), privacy: .public) \
+                blink=\(signals.blink, format: .fixed(precision: 2), privacy: .public) \
+                pose=\(signals.poseVariation, format: .fixed(precision: 2), privacy: .public) \
+                par=\(signals.parallax, format: .fixed(precision: 2), privacy: .public) \
+                => \(assessment.score, format: .fixed(precision: 3), privacy: .public)
+                """
+            )
+        }
+
         apply(.frameEvaluated(progress: Double(state.consecutiveMatches) / Double(required)))
         publish(
             RecognitionProgress(
@@ -475,13 +591,40 @@ public actor RecognitionCoordinator {
         // version of this code was saved from that only by latching a challenge
         // on a quarter-full window; once that premature latch was removed, this
         // guard is what keeps the ordering honest.
-        guard assessment.sampleCount >= livenessConfiguration.windowFrames else {
+        // Enough frames for the evidence actually being used: the passive
+        // signals stabilise well before the motion window fills.
+        let requiredSamples = purpose == .challenge
+            ? min(livenessConfiguration.windowFrames, RecognitionCoordinator.passiveEvidenceFrames)
+            : livenessConfiguration.windowFrames
+        guard assessment.sampleCount >= requiredSamples else {
             return .keepLooking
         }
 
         if let disqualifier = assessment.disqualifier {
             AppLogger.liveness.error("Attempt rejected: \(disqualifier, privacy: .public)")
             return .rejected(.livenessFailed)
+        }
+
+        // The lock screen requires a blink, always.
+        //
+        // Passive liveness was measured and it does not hold: the same phone
+        // scored 0.74 on texture isotropy at one distance and 0.95 at another,
+        // and at the second distance a photograph unlocked this Mac three times
+        // out of three in under a second. A signal that depends on where the
+        // attacker happens to hold the phone is not a defence.
+        //
+        // A blink is different in kind rather than degree. A still image —
+        // printed, or displayed — cannot produce a closure followed by a
+        // reopening, so this is the one check in the set that a photograph
+        // cannot satisfy at any distance, in any lighting.
+        //
+        // What it does not stop is a *video* replay that contains a blink.
+        // Stopping that needs the blink to be demanded at an unpredictable
+        // moment, and demanding anything needs somewhere to display the demand;
+        // SecurityAgent renders no UI for a third-party mechanism. That limit is
+        // recorded in KNOWN_LIMITATIONS.md section 14, not papered over.
+        if purpose == .challenge, !liveness.challengeSatisfied(.blink) {
+            return .keepLooking
         }
 
         if let challenge = state.activeChallenge {
@@ -510,12 +653,7 @@ public actor RecognitionCoordinator {
             // longer attempt so passive evidence could reach the band, and
             // drawing the prompt inside SecurityAgent itself.
             if purpose == .challenge {
-                AppLogger.liveness.notice(
-                    "Liveness is marginal and no prompt can be shown at the lock screen; judging on the floor alone"
-                )
-                return assessment.score >= livenessConfiguration.minimumScore
-                    ? .recognized
-                    : .rejected(.livenessFailed)
+                return .keepLooking
             }
             state.activeChallenge = suggested
             publish(

@@ -36,20 +36,61 @@ public struct LivenessSignals: Equatable, Sendable {
     public var texture: Double = 0
     /// Landmark geometry changing with head rotation the way a 3D head does.
     public var parallax: Double = 0
+    /// Fine detail with no preferred direction, as skin has and a pixel grid
+    /// does not. Readable from one frame.
+    public var isotropy: Double = 0
 
     public init() {}
 
-    /// Weighted combination. No single signal can carry the score on its own: the
-    /// largest weight is 0.28, so at least three independent signals have to agree
-    /// before even the most permissive preset's floor of 0.52 is reached.
+    /// Weighted combination, built from measured separation rather than from
+    /// what each signal ought to do in principle.
+    ///
+    /// Measured on this Mac, a live face against the same face shown on a phone:
+    ///
+    ///     signal     live    phone   separation
+    ///     isotropy   0.98    0.74    +0.24
+    ///     motion     0.93    0.45    +0.48
+    ///     texture    0.44    0.51    -0.07   inverted
+    ///     specular   0.32    0.73    -0.41   inverted
+    ///     shading    0.00    0.00     0      no signal at all
+    ///     blink      0-1     1.00     0      the phone "blinked"
+    ///
+    /// Three of those were removed rather than down-weighted. Specular
+    /// concentration was the worst: the reasoning behind it — that an emissive
+    /// display lights a face flatly, so its highlights spread thin — is simply
+    /// wrong about a phone, whose glass throws one sharp reflection. It scored
+    /// the attack *higher* than the real face, so at any positive weight it was
+    /// helping. Shading curvature reads zero for everything once the crop
+    /// includes background brighter than the face, which is most rooms. Texture
+    /// inverts slightly and is not worth its place.
+    ///
+    /// What remains are the two that separated. Neither needs the user to *do*
+    /// anything: isotropy is a property of one frame of skin, and micro-motion
+    /// is involuntary — breathing and postural sway measured 0.93 on someone
+    /// sitting deliberately still, which is the finding that makes passive
+    /// liveness possible here at all. The original design mistook `poseVariation`
+    /// and `parallax`, which do need deliberate movement, for the whole of
+    /// motion.
+    ///
+    /// Blink, pose variation and parallax are kept at small weight as
+    /// corroboration only. They cannot lift a spoof over the floor between them,
+    /// and the measurements say they cannot be relied on to lift a genuine face
+    /// either.
     public var aggregate: Double {
+        // Micro-motion carries the most weight because it separated the most:
+        // 0.93 on a motionless person against 0.45 on a phone. Isotropy is kept
+        // but demoted hard — it read 0.74 on one phone and 0.95 on the same
+        // phone moved closer, and a signal whose answer depends on the
+        // attacker's distance cannot be trusted with the score. On the lock
+        // screen none of this is load-bearing anyway: a blink is required
+        // outright there, and this aggregate only corroborates it.
         let weighted =
-            0.24 * blink +
-            0.22 * poseVariation +
-            0.26 * microMotion +
-            0.28 * texture * 0.7 +
-            0.28 * parallax
-        return min(1, max(0, weighted / (0.24 + 0.22 + 0.26 + 0.28 * 0.7 + 0.28)))
+            0.40 * microMotion +
+            0.20 * isotropy +
+            0.15 * poseVariation +
+            0.15 * parallax +
+            0.10 * blink
+        return min(1, max(0, weighted))
     }
 }
 
@@ -160,6 +201,7 @@ public final class LivenessAnalyzer: LivenessAnalyzing, @unchecked Sendable {
         signals.microMotion = microMotionScore(window)
         signals.texture = textureScore(window)
         signals.parallax = parallaxScore(window)
+        signals.isotropy = passiveScore(window, \.textureIsotropy)
 
         let score = signals.aggregate
         let needsChallenge: Bool
@@ -214,6 +256,23 @@ public final class LivenessAnalyzer: LivenessAnalyzing, @unchecked Sendable {
     }
 
     // MARK: - Individual signals
+
+    /// The trimmed mean of a per-frame passive measurement across the window.
+    ///
+    /// Trimmed rather than plain: a single frame caught mid-blink, or as the
+    /// autoexposure steps, is not evidence of anything, and one outlier should
+    /// not move a signal that the rest of the window agrees on. Using the middle
+    /// of the distribution also means the score *rises* as frames arrive instead
+    /// of swinging, which is what lets a still face clear the floor in about a
+    /// second rather than waiting for the window to fill.
+    func passiveScore(_ window: [LivenessSample], _ measurement: KeyPath<LivenessSample, Double>) -> Double {
+        let values = window.map { $0[keyPath: measurement] }.sorted()
+        guard !values.isEmpty else { return 0 }
+        guard values.count >= 5 else { return ImageAnalysis.mean(values) }
+        let trim = values.count / 5
+        let middle = Array(values[trim..<(values.count - trim)])
+        return ImageAnalysis.mean(middle.isEmpty ? values : middle)
+    }
 
     /// A full closure-then-reopening transition scores 1, anything less scores 0.
     /// Partial credit is deliberately not given: a half-closed eye is as consistent

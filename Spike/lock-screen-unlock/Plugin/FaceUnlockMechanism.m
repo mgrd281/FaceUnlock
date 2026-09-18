@@ -109,9 +109,10 @@ static NSString *FUUsernameHint(MechanismRecord *mechanism) {
  *  costs a password prompt, never an unlock.
  */
 static BOOL FUAskBroker(MechanismRecord *mechanism) {
-    NSString *requirement = FUBrokerRequirement();
-    if (requirement == nil) {
-        os_log_error(FULog(), "No broker requirement on disk; declining");
+    // peers.plist is still required on disk: its absence means the components
+    // were never installed, and declining is then the correct answer.
+    if (FUBrokerRequirement() == nil) {
+        os_log_error(FULog(), "Lock-screen unlock is not installed; declining");
         return NO;
     }
 
@@ -127,12 +128,38 @@ static BOOL FUAskBroker(MechanismRecord *mechanism) {
         return NO;
     }
 
-    if (xpc_connection_set_peer_code_signing_requirement(
-            connection, requirement.UTF8String) != 0) {
-        os_log_error(FULog(), "The broker requirement could not be applied; declining");
-        xpc_connection_cancel(connection);
-        return NO;
-    }
+    // The broker is deliberately *not* pinned by code-signing requirement here,
+    // and this is the one place in the design where a check was removed rather
+    // than kept.
+    //
+    // It is not a choice. Inside SecurityAgent the mechanism runs as
+    // `_securityagent`, and that sandbox cannot reach
+    // `com.apple.CodeSigningHelper`, which is what libxpc uses to evaluate a
+    // peer requirement. Unable to evaluate, it fails closed and rejects every
+    // reply — the broker answers "recognised", libxpc discards it with
+    // "Received message forbidden due to code signing requirement", and the
+    // password appears. Measured on a real lock screen: the broker's own
+    // validation of *its* peer succeeded from root and logged a
+    // CodeSigningHelper connection; the mechanism never logged one. The form of
+    // the requirement is irrelevant — certificate-based and cdhash-based fail
+    // identically, because neither is ever evaluated.
+    //
+    // What still stands in its place:
+    //
+    //   * The asker service lives in the *system* bootstrap domain, registered
+    //     by launchd from a root-owned LaunchDaemon plist. Claiming that name
+    //     requires root — and an attacker with root can replace this bundle,
+    //     the daemon and the authorisation database itself, so the pin was
+    //     never what stood between them and an unlock.
+    //   * The broker still pins *this* mechanism's host, from root, where
+    //     evaluation works.
+    //   * The app still pins the broker before answering anything, from the
+    //     user's session, where evaluation works. That is the direction that
+    //     carries the risk: the app must never answer an impostor.
+    //
+    // So the unverified hop is the one that learns a single boolean, from a
+    // service only root can publish, and the requirement is kept on disk for
+    // the app, which can still enforce it. See DESIGN.md section 4.
 
     xpc_connection_set_event_handler(connection, ^(xpc_object_t event) {
         // Errors surface through the reply handler below; this handler exists

@@ -126,6 +126,37 @@ public enum ImageAnalysis {
         return min(1, highFrequency / (total * 4))
     }
 
+    /// How directional the fine detail is, `0...1`, where 1 is perfectly
+    /// isotropic and 0 is entirely aligned to one axis.
+    ///
+    /// This is the single most useful thing a still frame can say about a
+    /// display. Skin texture — pores, fine hair, the grain of the sensor's noise
+    /// — has no preferred direction, so its horizontal and vertical gradient
+    /// energies are about equal. An LCD or OLED panel photographed off-axis adds
+    /// a *regular grid*, and a grid is strongly anisotropic: energy piles up on
+    /// the row and column axes. A printed photograph often shows the same thing
+    /// from halftone screening.
+    ///
+    /// Unlike micro-motion this needs no time to accumulate, which is what lets
+    /// a motionless face be judged at all.
+    public static func textureIsotropy(_ grid: GrayscaleGrid) -> Double {
+        guard grid.width > 2, grid.height > 2 else { return 0 }
+        var horizontal: Double = 0
+        var vertical: Double = 0
+        for y in 1..<(grid.height - 1) {
+            for x in 1..<(grid.width - 1) {
+                let dx = Double(grid[x + 1, y] - grid[x - 1, y])
+                let dy = Double(grid[x, y + 1] - grid[x, y - 1])
+                horizontal += dx * dx
+                vertical += dy * dy
+            }
+        }
+        let total = horizontal + vertical
+        guard total > 1e-9 else { return 0 }
+        // 1 when the two axes carry equal energy, falling to 0 as one dominates.
+        return 1 - abs(horizontal - vertical) / total
+    }
+
     /// Population variance of a sample.
     public static func variance(_ values: [Double]) -> Double {
         guard values.count > 1 else { return 0 }

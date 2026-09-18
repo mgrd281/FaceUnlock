@@ -29,10 +29,14 @@ public actor ManualConfirmationUnlockProvider: UnlockProvider {
     public func canUnlockCurrentState() async -> Bool { true }
 
     public func attemptUnlock() async throws {
-        await notificationCenter.post(
-            title: "FaceUnlock recognised you",
-            body: "macOS needs you to finish unlocking — use Touch ID or your password."
-        )
+        // The notification is suppressed while the lock-screen work is unfinished.
+        //
+        // It fires on every recognised face, including the ones that happen
+        // during a lock-screen challenge, so it announced itself repeatedly
+        // without ever being the thing that unlocked anything. Once the
+        // lock-screen path is settled this provider goes back to being the
+        // honest fallback it was written as, and the notification returns with
+        // it. The log line stays, because diagnosing this path depends on it.
         AppLogger.unlock.notice("Recognition confirmed; manual completion requested")
     }
 }

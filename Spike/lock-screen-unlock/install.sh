@@ -120,15 +120,43 @@ HOST_REQ='anchor apple and (identifier "com.apple.SecurityAgentHelper.arm64" or 
 if [ -n "${FACEUNLOCK_TEAM_ID:-}" ]; then
     echo "==> Pinning peers to Team ID $FACEUNLOCK_TEAM_ID"
     APP_REQ="identifier \"de.faceunlock.mac\" and anchor apple generic and certificate leaf[subject.OU] = \"$FACEUNLOCK_TEAM_ID\""
-    BROKER_REQ="identifier \"de.faceunlock.daemon\" and anchor apple generic and certificate leaf[subject.OU] = \"$FACEUNLOCK_TEAM_ID\""
 else
     echo "==> Deriving peer requirements from the installed code (trust on first use)"
     echo "    Set FACEUNLOCK_TEAM_ID for a Developer ID build to pin the team instead."
     APP_REQ="$(requirement_for "$APP_PATH")"
-    BROKER_REQ="$(requirement_for "$DAEMON_SRC")"
 fi
 
-for pair in "app:$APP_REQ" "broker:$BROKER_REQ"; do
+# The broker's requirement is pinned by cdhash, not by certificate, and that is
+# not a shortcut — it is the only form the mechanism can evaluate.
+#
+# The mechanism runs inside SecurityAgent. At the real lock screen that process
+# is `_securityagent` (uid 92) in a restricted sandbox, and validating a
+# certificate chain there needs trustd, which it cannot reach. A certificate
+# requirement therefore fails at exactly the moment the feature is supposed to
+# work: the broker answers "recognised", libxpc rejects the peer on the reply
+# path, and the password appears. It passed every earlier test because
+# `authprobe` asks for the probe right as the logged-in user, so SecurityAgent
+# ran as uid 501 with no such restriction — the rehearsal was not faithful to
+# the performance on the one axis that mattered.
+#
+# A cdhash needs no chain validation, and it is the stricter pin: it names one
+# exact binary rather than anything that team ever signed. It is re-derived on
+# every install, so updating the daemon updates the pin.
+BROKER_CDHASH="$(codesign -d --verbose=4 "$DAEMON_SRC" 2>&1 | /usr/bin/sed -n 's/^CDHash=//p')"
+if [ -z "$BROKER_CDHASH" ]; then
+    echo "Could not read the broker's cdhash. Is $DAEMON_SRC signed?" >&2
+    exit 1
+fi
+BROKER_REQ="identifier \"de.faceunlock.daemon\" and cdhash H\"$BROKER_CDHASH\""
+
+# Verify it against the binary being installed, rather than discovering at the
+# lock screen that the pin matches nothing.
+if ! codesign --verify -R="$BROKER_REQ" "$DAEMON_SRC" 2>/dev/null; then
+    echo "The broker does not satisfy its own cdhash requirement. Aborting." >&2
+    exit 1
+fi
+
+for pair in "app:$APP_REQ"; do
     if [ -z "${pair#*:}" ]; then
         echo "Could not derive a code requirement for ${pair%%:*}. Is it signed?" >&2
         exit 1

@@ -80,6 +80,7 @@ final class LivenessAnalyzerTests: XCTestCase {
         signals.microMotion = 1
         signals.texture = 1
         signals.parallax = 1
+        signals.isotropy = 1
         XCTAssertEqual(signals.aggregate, 1, accuracy: 1e-9)
     }
 
@@ -191,5 +192,80 @@ final class LivenessChallengeTimingTests: XCTestCase {
                 "a full window with marginal evidence must still ask"
             )
         }
+    }
+}
+
+
+/// The blink requirement is the whole of the lock screen's anti-spoofing now,
+/// so it has to be exactly as strong as it claims.
+///
+/// Measured reality that motivated this: a phone held at one distance scored
+/// 0.95 on texture isotropy — indistinguishable from real skin — and unlocked
+/// this Mac three times in a row. A blink was the only signal left that a still
+/// image cannot fake. These tests exist so that claim stays true.
+final class BlinkRequirementTests: XCTestCase {
+    private func configuration() -> BiometricProfile.LivenessConfiguration {
+        BiometricProfile.LivenessConfiguration(
+            mode: .adaptiveChallenge,
+            minimumScore: SensitivityPreset.balanced.livenessFloor,
+            windowFrames: 12
+        )
+    }
+
+    /// The failure that would make the whole design worthless.
+    func testAStillImageNeverSatisfiesTheBlink() {
+        let analyzer = LivenessAnalyzer()
+        for sample in Fake.photoSamples(count: 24) { analyzer.record(sample) }
+        XCTAssertFalse(
+            analyzer.challengeSatisfied(.blink),
+            "a photograph must never register a blink — the lock screen relies on it"
+        )
+    }
+
+    /// A still image displayed on a screen must fail the same way.
+    ///
+    /// The fixture matters here: `screenReplaySamples` is a replay of *live*
+    /// footage, so it contains a real blink and passes — correctly, because a
+    /// video replay genuinely can blink. What must never pass is a still image,
+    /// which is what a photograph on a phone actually is.
+    func testAStillImageOnAScreenNeverSatisfiesTheBlink() {
+        let analyzer = LivenessAnalyzer()
+        for sample in Fake.stillImageOnScreenSamples(count: 24) { analyzer.record(sample) }
+        XCTAssertFalse(analyzer.challengeSatisfied(.blink))
+    }
+
+    /// The exact attack that unlocked this Mac: a phone at the distance where
+    /// isotropy reads like skin. It must now fail on the blink.
+    func testThePhoneAttackThatSucceededNowFails() {
+        let analyzer = LivenessAnalyzer()
+        for sample in Fake.stillImageOnScreenSamples(count: 24) { analyzer.record(sample) }
+        XCTAssertFalse(
+            analyzer.challengeSatisfied(.blink),
+            "this is the measured attack; it unlocked three times out of three before the blink was required"
+        )
+    }
+
+    /// Eyes that are simply closed in the picture are not a blink either: a
+    /// blink is a transition, and a photograph of someone mid-blink is still a
+    /// photograph.
+    func testPermanentlyClosedEyesAreNotABlink() {
+        let analyzer = LivenessAnalyzer()
+        for sample in Fake.photoSamples(count: 20) {
+            var closed = sample
+            closed.eyeAspectRatio = 0.10
+            analyzer.record(closed)
+        }
+        XCTAssertFalse(analyzer.challengeSatisfied(.blink))
+    }
+
+    /// And a genuine open-closed-open sequence must still pass, or the feature
+    /// is unusable rather than merely strict.
+    func testAGenuineBlinkIsAccepted() {
+        let analyzer = LivenessAnalyzer()
+        var samples = Fake.liveSamples(count: 18)
+        samples[6].eyeAspectRatio = 0.10
+        samples[7].eyeAspectRatio = 0.09
+        for sample in samples { analyzer.record(sample) }
+        XCTAssertTrue(analyzer.challengeSatisfied(.blink))
     }
 }

@@ -185,7 +185,10 @@ public final class AppEnvironment {
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         self.updateChecker = UpdateChecker(
-            feedURL: URL(string: "https://faceunlock.de/appcast/latest.json")
+            // Served from the repository rather than a domain, so the feed
+            // exists wherever the releases do. The manifest points at the
+            // Releases page; nothing is downloaded or installed automatically.
+            feedURL: URL(string: "https://raw.githubusercontent.com/mgrd281/FaceUnlock/main/appcast/latest.json")
                 ?? URL(fileURLWithPath: "/dev/null"),
             currentVersion: version,
             isEnabled: { Preferences.automaticUpdateChecksAreEnabled() }

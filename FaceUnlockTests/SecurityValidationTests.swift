@@ -141,7 +141,11 @@ final class SecurityValidationTests: XCTestCase {
         let capability = await provider.capability()
         XCTAssertEqual(capability, .limited)
         try? await provider.attemptUnlock()
-        XCTAssertEqual(notifications.posted.count, 1)
+        // Suppressed while the lock-screen work is unfinished: it fired on every
+        // recognised face, including during lock-screen challenges it had no
+        // part in. Asserting zero keeps its return a deliberate act rather than
+        // something that creeps back.
+        XCTAssertEqual(notifications.posted.count, 0)
     }
 }
 

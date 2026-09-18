@@ -8,6 +8,16 @@ public protocol CameraManaging: Sendable {
     func start(frameRate: Double) async throws -> AsyncStream<CameraFrame>
     func stop() async
     func isRunning() async -> Bool
+    /// Brings the capture session up without a consumer, so that a `start` a
+    /// moment later returns frames immediately instead of paying setup and
+    /// exposure-settling cost. Safe to call when already running.
+    func prewarm(frameRate: Double) async
+}
+
+public extension CameraManaging {
+    // Default so that existing doubles need no change: pre-warming is an
+    // optimisation and never changes what a caller observes.
+    func prewarm(frameRate: Double) async {}
 }
 
 /// Owns the `AVCaptureSession`.
@@ -55,7 +65,33 @@ public final class CameraManager: CameraManaging, @unchecked Sendable {
         }
     }
 
+    /// Starts the session and discards frames until a real consumer arrives.
+    ///
+    /// The camera costs about a second to come up and settle, and at the lock
+    /// screen that second is the whole of the user's wait: SecurityAgent asks
+    /// only once the user is already there, so setup happens while they watch.
+    /// Waking on the same signal the user generates — lid, key, trackpad — moves
+    /// that cost before the question is asked.
+    ///
+    /// It holds the camera, so it is deliberately short-lived: `stop()` runs the
+    /// moment a verdict is reached, and the caller bounds the idle case.
+    public func prewarm(frameRate: Double) async {
+        await withCheckedContinuation { (resumed: CheckedContinuation<Void, Never>) in
+            sessionQueue.async {
+                guard self.session == nil else { resumed.resume(); return }
+                let interval = 1.0 / max(1.0, frameRate)
+                _ = try? self.startOnQueue(minimumInterval: interval)
+                resumed.resume()
+            }
+        }
+    }
+
     public func start(frameRate: Double) async throws -> AsyncStream<CameraFrame> {
+        // A pre-warmed session is reused rather than torn down and rebuilt:
+        // rebuilding would throw away exactly the second the pre-warm bought.
+        if let reused = await attachToRunningSession(frameRate: frameRate) {
+            return reused
+        }
         await stop()
         let interval = 1.0 / max(1.0, frameRate)
         let stream: AsyncStream<CameraFrame> = try await withCheckedThrowingContinuation { resumed in
@@ -157,6 +193,41 @@ public final class CameraManager: CameraManaging, @unchecked Sendable {
             throw FaceUnlockError.cameraStartFailed("The capture session did not start.")
         }
         return stream
+    }
+
+    /// Attaches a fresh consumer to an already-running session, or returns nil
+    /// if there is nothing to attach to.
+    private func attachToRunningSession(frameRate: Double) async -> AsyncStream<CameraFrame>? {
+        await withCheckedContinuation { (resumed: CheckedContinuation<AsyncStream<CameraFrame>?, Never>) in
+            sessionQueue.async {
+                guard let session = self.session, session.isRunning, let output = self.output else {
+                    resumed.resume(returning: nil)
+                    return
+                }
+                // The previous consumer — the pre-warm sink — is finished before
+                // the new one is attached, so exactly one continuation is ever
+                // live and `onTermination` cannot tear down the session the new
+                // consumer is about to use.
+                let previous = self.continuation
+                self.continuation = nil
+                previous?.finish()
+
+                let interval = 1.0 / max(1.0, frameRate)
+                let stream = AsyncStream<CameraFrame>(bufferingPolicy: .bufferingNewest(2)) { continuation in
+                    let delegate = FrameDelegate(minimumInterval: interval) { frame in
+                        continuation.yield(frame)
+                    }
+                    output.setSampleBufferDelegate(delegate, queue: self.sessionQueue)
+                    self.delegate = delegate
+                    self.continuation = continuation
+                    continuation.onTermination = { [weak self] _ in
+                        guard let self else { return }
+                        self.sessionQueue.async { self.teardownOnQueue() }
+                    }
+                }
+                resumed.resume(returning: stream)
+            }
+        }
     }
 
     private func teardownOnQueue() {
