@@ -185,10 +185,14 @@ public final class AppEnvironment {
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
         self.updateChecker = UpdateChecker(
-            // Served from the repository rather than a domain, so the feed
-            // exists wherever the releases do. The manifest points at the
-            // Releases page; nothing is downloaded or installed automatically.
-            feedURL: URL(string: "https://raw.githubusercontent.com/mgrd281/FaceUnlock/main/appcast/latest.json")
+            // Served as an asset of the newest release rather than from a
+            // branch. `releases/latest/download/...` is stable whatever the
+            // default branch is called — the first attempt hard-coded `main`
+            // and 404'd, because this repository's default branch is not called
+            // that — and it cannot drift from the release it describes, because
+            // it ships with it. Nothing is downloaded or installed
+            // automatically; the manifest only says a newer version exists.
+            feedURL: URL(string: "https://github.com/mgrd281/FaceUnlock/releases/latest/download/latest.json")
                 ?? URL(fileURLWithPath: "/dev/null"),
             currentVersion: version,
             isEnabled: { Preferences.automaticUpdateChecksAreEnabled() }
