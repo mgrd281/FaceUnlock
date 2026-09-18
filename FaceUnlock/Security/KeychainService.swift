@@ -89,19 +89,52 @@ public struct KeychainService: KeychainServicing {
         return query
     }
 
-    /// Runs `operation` against the data-protection keychain and, only when it
-    /// answers `errSecMissingEntitlement`, once more against the login keychain.
-    /// The downgrade sticks for the life of the process and is logged; no other
-    /// status ever triggers it.
-    private func withKeychain(_ operation: (_ dataProtection: Bool) -> OSStatus) -> OSStatus {
+    /// Runs `operation` against the data-protection keychain and, when that
+    /// cannot answer, once more against the login keychain.
+    ///
+    /// Two statuses mean "ask the other keychain", and conflating them cost real
+    /// data:
+    ///
+    /// - `errSecMissingEntitlement` — this build cannot use the data-protection
+    ///   keychain at all. The downgrade sticks for the life of the process.
+    /// - `errSecItemNotFound` on a *read* — the data-protection keychain works,
+    ///   but the item was written by an earlier run that had already downgraded,
+    ///   so it lives in the login keychain. This must **not** mark data
+    ///   protection unavailable; it only means "look in the other one too".
+    ///
+    /// Before this distinction existed, a read returned `errSecItemNotFound` and
+    /// the caller concluded the encryption key did not exist. The next
+    /// enrolment then minted a fresh key and overwrote the real one, silently
+    /// destroying every profile enrolled before it — which presented as a
+    /// profile that was "corrupt" at launch and mysteriously fine later in the
+    /// same session, once some write had triggered the downgrade.
+    private func withKeychain(
+        readFallback: Bool = false,
+        _ operation: (_ dataProtection: Bool) -> OSStatus
+    ) -> OSStatus {
         guard dataProtectionAvailable.value else { return operation(false) }
         let status = operation(true)
-        guard status == Self.missingEntitlementStatus else { return status }
-        dataProtectionAvailable.value = false
-        AppLogger.keychain.notice(
-            "Data-protection keychain unavailable (unsigned or ad-hoc build); using the login keychain"
-        )
-        return operation(false)
+
+        if status == Self.missingEntitlementStatus {
+            dataProtectionAvailable.value = false
+            AppLogger.keychain.notice(
+                "Data-protection keychain unavailable (unsigned or ad-hoc build); using the login keychain"
+            )
+            return operation(false)
+        }
+
+        if readFallback, status == errSecItemNotFound {
+            let fallback = operation(false)
+            if fallback == errSecSuccess {
+                AppLogger.keychain.notice(
+                    "Item found in the login keychain rather than the data-protection keychain"
+                )
+                return fallback
+            }
+            return status
+        }
+
+        return status
     }
 
     public func setData(_ data: Data, for item: KeychainItem) throws {
@@ -129,7 +162,7 @@ public struct KeychainService: KeychainServicing {
 
     public func data(for item: KeychainItem) throws -> Data? {
         var result: CFTypeRef?
-        let status = withKeychain { dataProtection in
+        let status = withKeychain(readFallback: true) { dataProtection in
             var query = baseQuery(for: item, dataProtection: dataProtection)
             query[kSecReturnData as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -147,18 +180,37 @@ public struct KeychainService: KeychainServicing {
         }
     }
 
+    /// Deletes from **both** keychains, always.
+    ///
+    /// A copy can exist in either — the data-protection keychain when this build
+    /// can use it, the login keychain when an earlier run had downgraded — and
+    /// deleting from only one leaves the other behind. That is not a tidiness
+    /// problem: `EncryptionService.destroyKey()` promises that any remaining
+    /// ciphertext becomes unrecoverable, and a surviving copy of the key breaks
+    /// that promise outright. Neither keychain reporting `errSecItemNotFound` is
+    /// an error here; between them, the item is gone.
     public func removeItem(_ item: KeychainItem) throws {
-        let status = withKeychain { dataProtection in
-            SecItemDelete(baseQuery(for: item, dataProtection: dataProtection) as CFDictionary)
+        var firstFailure: OSStatus?
+        for dataProtection in [true, false] {
+            if dataProtection && !dataProtectionAvailable.value { continue }
+            let status = SecItemDelete(
+                baseQuery(for: item, dataProtection: dataProtection) as CFDictionary)
+            switch status {
+            case errSecSuccess, errSecItemNotFound, Self.missingEntitlementStatus:
+                continue
+            default:
+                AppLogger.keychain.error(
+                    "Keychain delete failed (status \(status, privacy: .public))")
+                if firstFailure == nil { firstFailure = status }
+            }
         }
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            AppLogger.keychain.error("Keychain delete failed (status \(status, privacy: .public))")
-            throw FaceUnlockError.keychainFailure(status: status)
+        if let firstFailure {
+            throw FaceUnlockError.keychainFailure(status: firstFailure)
         }
     }
 
     public func containsItem(_ item: KeychainItem) throws -> Bool {
-        let status = withKeychain { dataProtection in
+        let status = withKeychain(readFallback: true) { dataProtection in
             var query = baseQuery(for: item, dataProtection: dataProtection)
             query[kSecReturnData as String] = false
             query[kSecMatchLimit as String] = kSecMatchLimitOne

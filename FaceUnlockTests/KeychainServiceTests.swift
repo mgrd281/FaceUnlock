@@ -84,3 +84,70 @@ final class KeychainServiceTests: XCTestCase {
         XCTAssertThrowsError(try service.decrypt(ciphertext))
     }
 }
+
+/// The keychain fallback, which destroyed two enrolments before it was found.
+///
+/// `KeychainService` prefers the data-protection keychain and falls back to the
+/// login keychain. These tests pin the two statuses that mean "ask the other
+/// one", because conflating them is not a cosmetic bug: it made the app mint a
+/// fresh encryption key over the top of the real one.
+final class KeychainFallbackTests: XCTestCase {
+    /// Records which keychain each operation was aimed at.
+    private final class Spy {
+        var reads: [Bool] = []
+        var deletes: [Bool] = []
+    }
+
+    func testAReadFallsBackToTheLoginKeychainWhenTheItemIsNotInDataProtection() {
+        // The real failure: the key lives in the login keychain because an
+        // earlier run had downgraded. A data-protection read answers
+        // `errSecItemNotFound`, which is *not* `errSecMissingEntitlement`, so the
+        // fallback never fired and the caller concluded there was no key at all.
+        let spy = Spy()
+        let status = Self.simulate(readFallback: true, spy: spy) { dataProtection in
+            spy.reads.append(dataProtection)
+            return dataProtection ? errSecItemNotFound : errSecSuccess
+        }
+        XCTAssertEqual(status, errSecSuccess, "the login keychain holds the item and must be consulted")
+        XCTAssertEqual(spy.reads, [true, false], "both keychains must be tried, in that order")
+    }
+
+    func testAGenuinelyAbsentItemIsStillReportedAsNotFound() {
+        let spy = Spy()
+        let status = Self.simulate(readFallback: true, spy: spy) { dataProtection in
+            spy.reads.append(dataProtection)
+            return errSecItemNotFound
+        }
+        XCTAssertEqual(status, errSecItemNotFound)
+        XCTAssertEqual(spy.reads, [true, false])
+    }
+
+    /// Writes must not fall back merely because nothing was there to overwrite.
+    func testAWriteDoesNotFallBackOnNotFound() {
+        let spy = Spy()
+        let status = Self.simulate(readFallback: false, spy: spy) { dataProtection in
+            spy.reads.append(dataProtection)
+            return errSecItemNotFound
+        }
+        XCTAssertEqual(status, errSecItemNotFound)
+        XCTAssertEqual(spy.reads, [true], "a write must not be retried against the other keychain")
+    }
+
+    /// Mirrors `KeychainService.withKeychain`. The real method is private and
+    /// talks to the system keychain, which a unit test must not touch; this
+    /// reproduces its decision table so the table itself stays pinned.
+    private static func simulate(
+        readFallback: Bool,
+        spy: Spy,
+        _ operation: (Bool) -> OSStatus
+    ) -> OSStatus {
+        let missingEntitlement: OSStatus = -34018
+        let status = operation(true)
+        if status == missingEntitlement { return operation(false) }
+        if readFallback, status == errSecItemNotFound {
+            let fallback = operation(false)
+            return fallback == errSecSuccess ? fallback : status
+        }
+        return status
+    }
+}
