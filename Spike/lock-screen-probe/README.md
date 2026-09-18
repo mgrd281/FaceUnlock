@@ -10,7 +10,9 @@ behaviour, and it has changed between releases.
 delivering camera frames to an ordinary process in the user's session, and can
 Vision still find a face in them?
 
-**Question 2 — the unlock.** Can a login-window authorisation plugin
+**Question 2 — the unlock.** (Now also answered yes — a shipping product
+appears as an entry on the macOS lock screen, which is existence proof of the
+mechanism. The resulting design is in `../lock-screen-unlock/DESIGN.md`.) Can a login-window authorisation plugin
 (`/Library/Security/SecurityAgentPlugins`, registered against
 `system.login.screensaver`) take a "yes, it is them" answer from FaceUnlock and
 satisfy the authentication? This is Apple's documented extension point for
